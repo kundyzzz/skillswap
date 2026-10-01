@@ -22,7 +22,9 @@ Response:
   "name": "Student",
   "email": "student@example.com"
 }
-POST /auth/login
+
+
+### POST /auth/login
 
 Authenticate an existing user.
 
@@ -39,8 +41,9 @@ Response:
   "token": "jwt-token",
   "user_id": "user-id"
 }
-Groups
-POST /groups
+
+### Groups
+### POST /groups
 
 Create a new skill-sharing group.
 
