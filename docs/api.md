@@ -1,4 +1,4 @@
-# SkillSwap API (Week 6)
+# SkillSwap API
 
 Base URL: `/api`
 Format: JSON, field names in snake_case.
