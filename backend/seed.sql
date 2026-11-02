@@ -1,4 +1,16 @@
 
+
+-- Seed categories
+INSERT INTO categories (name)
+VALUES
+    ('Academic'),
+    ('Languages'),
+    ('IT & Programming'),
+    ('Sport'),
+    ('Arts & Music'),
+    ('Other')
+ON CONFLICT (name) DO NOTHING;
+
 INSERT INTO skills (name, category_id)
 SELECT data.skill_name, c.id
 FROM (
