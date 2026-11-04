@@ -279,6 +279,65 @@ app.get('/api/auth/me', async (req, res) => {
 });
 
 
+app.get('/api/users/me', async (req, res) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Authentication required'
+      }
+    });
+  }
+
+  let decoded;
+
+  try {
+    decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+  } catch (error) {
+    return res.status(401).json({
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid or expired token'
+      }
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.email,
+              p.university, p.faculty, p.year, p.bio,
+              p.whatsapp, p.telegram
+       FROM users u
+       LEFT JOIN profiles p ON p.user_id = u.id
+       WHERE u.id = $1`,
+      [decoded.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'User not found'
+        }
+      });
+    }
+
+    return res.status(200).json(result.rows[0]);
+  } catch (error) {
+    console.error('Get own profile error:', error.message);
+
+    return res.status(500).json({
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to fetch own profile'
+      }
+    });
+  }
+});
+
+
 app.get('/api/users/:id', async (req, res) => {
   try {
     const result = await pool.query(
