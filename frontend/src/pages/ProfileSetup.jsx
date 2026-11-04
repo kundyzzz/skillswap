@@ -42,7 +42,7 @@ export default function ProfileSetup() {
   useEffect(() => {
     let alive = true;
     api
-      .getUser(user.id)
+      .getMyProfile()
       .then((p) => {
         if (!alive) return;
         setForm((f) => ({
@@ -51,7 +51,9 @@ export default function ProfileSetup() {
           university: p.university || '',
           faculty: p.faculty || '',
           year: p.year ? String(p.year) : '',
-          bio: p.bio || ''
+          bio: p.bio || '',
+          contactApp: p.telegram ? 'telegram' : p.whatsapp ? 'whatsapp' : 'telegram',
+          contact: p.telegram || p.whatsapp || ''
         }));
       })
       .catch((e) => alive && setServerError(e.message))

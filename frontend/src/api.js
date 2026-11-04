@@ -81,6 +81,7 @@ export const getMe = () => request('/auth/me', { auth: true });
 
 // 2. Profile
 export const getUser = (id) => request(`/users/${id}`, { auth: true });
+export const getMyProfile = () => request('/users/me', { auth: true });
 export const updateMe = (data) => request('/users/me', { method: 'PUT', body: data, auth: true });
 
 // 3. Categories
