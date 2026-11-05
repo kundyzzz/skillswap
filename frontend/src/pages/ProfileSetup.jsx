@@ -32,8 +32,10 @@ export default function ProfileSetup() {
     year: '',
     bio: '',
     contactApp: 'telegram',
-    contact: ''
+    contact: '',
+    showContact: false
   });
+  const [saved, setSaved] = useState({ telegram: '', whatsapp: '' }); // contacts already in the database
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState({});
   const [serverError, setServerError] = useState('');
@@ -42,16 +44,23 @@ export default function ProfileSetup() {
   useEffect(() => {
     let alive = true;
     api
-      .getUser(user.id)
+      .getMyProfile()
       .then((p) => {
         if (!alive) return;
+        const telegram = p.telegram || '';
+        const whatsapp = p.whatsapp || '';
+        const contactApp = !telegram && whatsapp ? 'whatsapp' : 'telegram';
+        setSaved({ telegram, whatsapp });
         setForm((f) => ({
           ...f,
           name: p.name || '',
           university: p.university || '',
           faculty: p.faculty || '',
           year: p.year ? String(p.year) : '',
-          bio: p.bio || ''
+          bio: p.bio || '',
+          contactApp,
+          contact: contactApp === 'telegram' ? telegram : whatsapp,
+          showContact: Boolean(p.show_contact)
         }));
       })
       .catch((e) => alive && setServerError(e.message))
@@ -62,6 +71,14 @@ export default function ProfileSetup() {
   }, [user.id]);
 
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  // Switching Telegram <-> WhatsApp shows the contact already saved for that app.
+  const setContactApp = (e) => {
+    const contactApp = e.target.value;
+    setForm({ ...form, contactApp, contact: saved[contactApp] || '' });
+  };
+
+  const hasAnyContact = Boolean(form.contact.trim() || saved.telegram || saved.whatsapp);
 
   const filled = PROFILE_FIELDS.filter((f) => isFilled(form[f.key])).length;
   const percent = Math.round((filled / PROFILE_FIELDS.length) * 50); // step 1 = first 50%
@@ -80,6 +97,10 @@ export default function ProfileSetup() {
         next.contact = 'WhatsApp number: 10–15 digits, e.g. +77001234567';
       }
     }
+    // US-11 AC3: sharing needs a saved contact
+    if (form.showContact && !hasAnyContact) {
+      next.showContact = 'Add a Telegram username or WhatsApp number first';
+    }
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -95,7 +116,8 @@ export default function ProfileSetup() {
       university: form.university.trim(),
       faculty: form.faculty,
       year: Number(form.year),
-      bio: form.bio.trim()
+      bio: form.bio.trim(),
+      show_contact: form.showContact
     };
     // Contact is sent only when typed, so an empty field never wipes a saved contact.
     const contact = form.contact.trim();
@@ -109,7 +131,11 @@ export default function ProfileSetup() {
       setUser({ ...user, name: updated.name });
       navigate('/skills');
     } catch (err) {
-      setServerError(err.message);
+      if (err.code === 'CONTACT_REQUIRED') {
+        setErrors((prev) => ({ ...prev, showContact: err.message }));
+      } else {
+        setServerError(err.message);
+      }
     } finally {
       setBusy(false);
     }
@@ -231,7 +257,7 @@ export default function ProfileSetup() {
           <div className="row narrow-first">
             <div className="field">
               <label htmlFor="ps-app">Contact app</label>
-              <select id="ps-app" className="select" value={form.contactApp} onChange={set('contactApp')}>
+              <select id="ps-app" className="select" value={form.contactApp} onChange={setContactApp}>
                 <option value="telegram">Telegram</option>
                 <option value="whatsapp">WhatsApp</option>
               </select>
@@ -249,11 +275,32 @@ export default function ProfileSetup() {
             </div>
           </div>
 
+          <label className="checkbox" style={{ marginBottom: 6 }}>
+            <input
+              id="ps-show-contact"
+              type="checkbox"
+              checked={form.showContact}
+              onChange={(e) => {
+                setForm({ ...form, showContact: e.target.checked });
+                setErrors((prev) => ({ ...prev, showContact: undefined }));
+              }}
+            />
+            <span>
+              <b>Show my contact</b> to other students
+            </span>
+          </label>
+          {errors.showContact && (
+            <div className="field-error" style={{ marginTop: -4, marginBottom: 12 }} role="alert">
+              {errors.showContact}
+            </div>
+          )}
+
           <div className="alert info">
             <span className="dot" />
             <span>
-              Your contact is only revealed after another student chooses to connect. Leave it empty to
-              keep the contact you saved before.
+              {form.showContact
+                ? 'Other students will see a Contact button on your profile and can open your Telegram/WhatsApp.'
+                : 'Your contact is hidden. Turn on “Show my contact” when you are ready to be contacted.'}
             </span>
           </div>
 

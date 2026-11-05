@@ -91,9 +91,16 @@ export default function ProfilePage({ userId }) {
               <Link to="/skills" className="btn block" style={{ marginTop: 12 }}>
                 Edit skills
               </Link>
+              <p className="muted" data-testid="my-contact-status" style={{ marginBottom: 0 }}>
+                Contact: <b>{profile.contact_available ? 'visible to students' : 'hidden'}</b>
+                {' · '}
+                <Link to="/setup" className="link-btn">
+                  change
+                </Link>
+              </p>
             </>
           ) : (
-            <p className="muted">Contact details are revealed after you choose to connect (Sprint 2).</p>
+            <ContactBox userId={profile.id} name={profile.name} available={profile.contact_available} />
           )}
         </aside>
 
@@ -152,6 +159,75 @@ function SkillChips({ skills, categoryName, empty }) {
           {s.name} · <span className="muted">{levelLabel[s.level]}</span>
         </span>
       ))}
+    </div>
+  );
+}
+
+// US-10: open a student's Telegram/WhatsApp (only if they share it — US-11).
+function ContactBox({ userId, name, available }) {
+  const [contact, setContact] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const firstName = name.split(' ')[0];
+
+  if (!available) {
+    return (
+      <p className="muted" data-testid="contact-hidden">
+        {firstName} does not share contact details yet.
+      </p>
+    );
+  }
+
+  const load = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      setContact(await api.getContact(userId));
+    } catch (e) {
+      setError(e.code === 'CONTACT_HIDDEN' ? `${firstName} has hidden their contact.` : e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!contact) {
+    return (
+      <>
+        <button className="btn primary block" onClick={load} disabled={busy}>
+          {busy ? 'Loading…' : 'Contact'}
+        </button>
+        {error && (
+          <div className="alert error section-gap" role="alert">
+            {error}
+          </div>
+        )}
+      </>
+    );
+  }
+
+  const telegramUser = contact.telegram?.replace(/^@/, '');
+  const whatsappNumber = contact.whatsapp?.replace(/[^0-9]/g, '');
+
+  return (
+    <div className="panel white" style={{ textAlign: 'left', padding: 16 }} data-testid="contact-box">
+      <div className="small-caps" style={{ marginBottom: 10 }}>
+        Preferred contact
+      </div>
+      <div style={{ display: 'grid', gap: 10 }}>
+        {telegramUser && (
+          <a className="btn primary block" href={`https://t.me/${telegramUser}`} target="_blank" rel="noreferrer">
+            Open Telegram @{telegramUser}
+          </a>
+        )}
+        {whatsappNumber && (
+          <a className="btn block" href={`https://wa.me/${whatsappNumber}`} target="_blank" rel="noreferrer">
+            Open WhatsApp +{whatsappNumber}
+          </a>
+        )}
+      </div>
+      <p className="muted" style={{ marginBottom: 0 }}>
+        Meet in a public university space for your first exchange.
+      </p>
     </div>
   );
 }

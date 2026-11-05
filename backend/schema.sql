@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     year INTEGER CHECK (year BETWEEN 1 AND 7),
     bio TEXT,
     whatsapp VARCHAR(30),
-    telegram VARCHAR(100)
+    telegram VARCHAR(100),
+    show_contact BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE TABLE IF NOT EXISTS categories (

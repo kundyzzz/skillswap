@@ -279,6 +279,105 @@ app.get('/api/auth/me', async (req, res) => {
 });
 
 
+// ---------- Sprint 2: contact sharing (US-10, US-11) ----------
+
+function getUserIdFromToken(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  try {
+    return jwt.verify(authHeader.slice(7), process.env.JWT_SECRET).userId;
+  } catch (error) {
+    return null;
+  }
+}
+
+// Own full profile, including contact fields and the sharing switch.
+app.get('/api/users/me', async (req, res) => {
+  const userId = getUserIdFromToken(req);
+
+  if (!userId) {
+    return res.status(401).json({
+      error: { code: 'UNAUTHORIZED', message: 'Authentication required' }
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.email,
+              p.university, p.faculty, p.year, p.bio,
+              p.whatsapp, p.telegram,
+              COALESCE(p.show_contact, false) AS show_contact
+       FROM users u
+       LEFT JOIN profiles p ON p.user_id = u.id
+       WHERE u.id = $1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        error: { code: 'UNAUTHORIZED', message: 'User not found' }
+      });
+    }
+
+    return res.status(200).json(result.rows[0]);
+  } catch (error) {
+    console.error('Get own profile error:', error.message);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch profile' }
+    });
+  }
+});
+
+// Another student's WhatsApp/Telegram, only if they turned "Show my contact" on.
+app.get('/api/users/:id/contact', async (req, res) => {
+  const userId = getUserIdFromToken(req);
+
+  if (!userId) {
+    return res.status(401).json({
+      error: { code: 'UNAUTHORIZED', message: 'Authentication required' }
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT u.id, p.telegram, p.whatsapp, COALESCE(p.show_contact, false) AS show_contact
+       FROM users u
+       LEFT JOIN profiles p ON p.user_id = u.id
+       WHERE u.id = $1`,
+      [req.params.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: { code: 'USER_NOT_FOUND', message: 'User not found' }
+      });
+    }
+
+    const contact = result.rows[0];
+    const telegram = contact.telegram || null;
+    const whatsapp = contact.whatsapp || null;
+
+    if (!contact.show_contact || (!telegram && !whatsapp)) {
+      return res.status(403).json({
+        error: { code: 'CONTACT_HIDDEN', message: 'This student does not share contact details' }
+      });
+    }
+
+    return res.status(200).json({ user_id: contact.id, telegram, whatsapp });
+  } catch (error) {
+    if (error.code === '22P02') {
+      return res.status(400).json({
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid user ID' }
+      });
+    }
+
+    console.error('Get contact error:', error.message);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch contact' }
+    });
+  }
+});
+
 app.get('/api/users/:id', async (req, res) => {
   try {
     const result = await pool.query(
@@ -288,7 +387,11 @@ app.get('/api/users/:id', async (req, res) => {
         p.university,
         p.faculty,
         p.year,
-        p.bio
+        p.bio,
+        COALESCE(
+          p.show_contact AND (NULLIF(p.telegram, '') IS NOT NULL OR NULLIF(p.whatsapp, '') IS NOT NULL),
+          false
+        ) AS contact_available
        FROM users u
        LEFT JOIN profiles p ON p.user_id = u.id
        WHERE u.id = $1`,
@@ -364,7 +467,7 @@ app.put('/api/users/me', async (req, res) => {
     });
   }
 
-  const { name, university, faculty, year, bio, whatsapp, telegram } = req.body || {};
+  const { name, university, faculty, year, bio, whatsapp, telegram, show_contact } = req.body || {};
 
   if (
     (name !== undefined && (typeof name !== 'string' || !name.trim())) ||
@@ -372,7 +475,8 @@ app.put('/api/users/me', async (req, res) => {
       value => value !== undefined && value !== null && typeof value !== 'string'
     ) ||
     (year !== undefined && year !== null &&
-      (!Number.isInteger(year) || year < 1 || year > 7))
+      (!Number.isInteger(year) || year < 1 || year > 7)) ||
+    (show_contact !== undefined && typeof show_contact !== 'boolean')
   ) {
     return res.status(400).json({
       error: {
@@ -420,10 +524,36 @@ app.put('/api/users/me', async (req, res) => {
       [university, faculty, year, bio, whatsapp, telegram, decoded.userId]
     );
 
+    // US-11: contact can be shown only if a Telegram or WhatsApp is saved
+    if (show_contact !== undefined) {
+      if (show_contact === true) {
+        const saved = await client.query(
+          'SELECT telegram, whatsapp FROM profiles WHERE user_id = $1',
+          [decoded.userId]
+        );
+        const { telegram: savedTelegram, whatsapp: savedWhatsapp } = saved.rows[0] || {};
+
+        if (!savedTelegram?.trim() && !savedWhatsapp?.trim()) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: {
+              code: 'CONTACT_REQUIRED',
+              message: 'Add a Telegram username or WhatsApp number first'
+            }
+          });
+        }
+      }
+
+      await client.query(
+        'UPDATE profiles SET show_contact = $1 WHERE user_id = $2',
+        [show_contact, decoded.userId]
+      );
+    }
+
     const result = await client.query(
       `SELECT u.id, u.name, u.email,
               p.university, p.faculty, p.year, p.bio,
-              p.whatsapp, p.telegram
+              p.whatsapp, p.telegram, p.show_contact
        FROM users u
        JOIN profiles p ON p.user_id = u.id
        WHERE u.id = $1`,
