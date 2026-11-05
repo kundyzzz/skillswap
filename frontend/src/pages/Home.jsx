@@ -1,22 +1,26 @@
-// Home after login: shows what to do next. Matches list arrives in Sprint 2 (GET /matches).
+// Figma screen "Home matches" — US-06 bidirectional matching.
 import { useEffect, useState } from 'react';
 import * as api from '../api';
 import { useAuth } from '../auth';
 import { Link } from '../router';
 import Page from '../components/Page';
+import StudentCard from '../components/StudentCard';
 import { isFilled, PROFILE_FIELDS, profileCompletion } from '../utils';
 
 export default function Home() {
   const { user } = useAuth();
   const [profile, setProfile] = useState(null);
   const [skills, setSkills] = useState([]);
+  const [matches, setMatches] = useState([]);
+  const [filter, setFilter] = useState('all'); // all | mutual | can_teach_you
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api.getUser(user.id), api.getMySkills()])
-      .then(([p, s]) => {
+    Promise.all([api.getUser(user.id), api.getMySkills(), api.getMatches()])
+      .then(([p, s, m]) => {
         setProfile(p);
         setSkills(s);
+        setMatches(m);
       })
       .catch((e) => setError(e.message));
   }, [user.id]);
@@ -34,51 +38,105 @@ export default function Home() {
   const teachCount = skills.filter((s) => s.type === 'teach').length;
   const learnCount = skills.filter((s) => s.type === 'learn').length;
   const completion = profileCompletion(profile, skills);
+  const mutualCount = matches.filter((m) => m.match_type === 'mutual').length;
+  const visible = filter === 'all' ? matches : matches.filter((m) => m.match_type === filter);
 
   return (
     <Page>
       <div className="space-between" style={{ alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div>
           <span className="eyebrow plain">04 · Matches</span>
-          <h1 style={{ marginTop: 4 }}>Hi, {user.name.split(' ')[0]}!</h1>
+          <h1 style={{ marginTop: 4 }}>Students you could learn with</h1>
           <p className="muted" style={{ margin: 0 }}>
-            Finish these steps and we will show students you could learn with.
+            Based on your selected teaching and learning skills.
           </p>
         </div>
         <span className="badge">Profile completion: {completion}%</span>
       </div>
 
-      <div className="home-grid">
-        <div className="card step-card" style={{ background: 'var(--peach)' }}>
-          <h3>1. Basic details</h3>
-          <div className="status">{profileDone ? '✓ Done' : 'Some details are missing'}</div>
-          <Link to={profileDone ? '/profile' : '/setup'} className="btn primary block">
-            {profileDone ? 'View profile' : 'Complete profile'}
-          </Link>
+      {completion < 100 && (
+        <div className="alert info section-gap" data-testid="steps-banner">
+          <span className="dot" />
+          <span>
+            {!profileDone && (
+              <>
+                <Link to="/setup" className="link-btn">
+                  Complete your profile
+                </Link>
+                {' · '}
+              </>
+            )}
+            {teachCount === 0 && 'Add a skill you can teach · '}
+            {learnCount === 0 && 'Add a skill you want to learn · '}
+            <Link to="/skills" className="link-btn">
+              Go to My skills
+            </Link>
+          </span>
         </div>
-        <div className="card step-card" style={{ background: 'var(--mint)' }}>
-          <h3>2. Skills I can teach</h3>
-          <div className="status">{teachCount > 0 ? `✓ ${teachCount} added` : 'Add at least one'}</div>
-          <Link to="/skills" className="btn primary block">
-            {teachCount > 0 ? 'Edit skills' : 'Add skills'}
-          </Link>
-        </div>
-        <div className="card step-card" style={{ background: '#efe3ff' }}>
-          <h3>3. Skills I want to learn</h3>
-          <div className="status">{learnCount > 0 ? `✓ ${learnCount} added` : 'Add at least one'}</div>
-          <Link to="/skills" className="btn primary block">
-            {learnCount > 0 ? 'Edit skills' : 'Add skills'}
-          </Link>
-        </div>
-      </div>
+      )}
 
-      <div className="panel white section-gap">
-        <h3>Students you could learn with</h3>
-        <p className="muted" style={{ margin: 0 }}>
-          Matching is coming in Sprint 2. As soon as the backend adds <code>GET /api/matches</code>,
-          your compatible students will appear here.
-        </p>
-      </div>
+      {learnCount === 0 ? (
+        <div className="panel white section-gap" data-testid="no-learn-skills">
+          <h3>Add skills you want to learn to get matches</h3>
+          <p className="muted">We match you with students who teach what you want to learn.</p>
+          <Link to="/skills" className="btn primary">
+            Go to My skills
+          </Link>
+        </div>
+      ) : (
+        <>
+          <div className="results-bar section-gap">
+            <span className="small-caps" data-testid="match-count">
+              {matches.length} compatible {matches.length === 1 ? 'student' : 'students'}
+              {mutualCount > 0 && ` · ${mutualCount} mutual`}
+            </span>
+            <div className="chips">
+              {[
+                ['all', 'All'],
+                ['mutual', 'Mutual match'],
+                ['can_teach_you', 'Can teach you']
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  className={`chip ${filter === value ? 'active' : ''}`}
+                  onClick={() => setFilter(value)}
+                  aria-pressed={filter === value}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {visible.length === 0 ? (
+            <div className="empty section-gap">
+              No matches yet. Try adding more skills, or{' '}
+              <Link to="/search" className="link-btn">
+                search by subject
+              </Link>
+              .
+            </div>
+          ) : (
+            <div className="student-grid">
+              {visible.map((m, i) => (
+                <StudentCard
+                  key={m.id}
+                  student={m}
+                  index={i}
+                  badge={
+                    m.match_type === 'mutual'
+                      ? { kind: 'mutual', text: 'Mutual match' }
+                      : { kind: 'oneway', text: 'Can teach you' }
+                  }
+                  teachLabel="Can teach you"
+                  teaches={m.can_teach_you}
+                  wants={m.wants_from_you}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </Page>
   );
 }

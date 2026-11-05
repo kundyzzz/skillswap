@@ -62,7 +62,8 @@ export default function ProfilePage({ userId }) {
   return (
     <Page>
       <div className="breadcrumb">
-        <Link to="/">Home</Link> / <b>{isMe ? 'My profile' : profile.name}</b>
+        <Link to="/">Home</Link> / {!isMe && <><Link to="/">Matches</Link> / </>}
+        <b>{isMe ? 'My profile' : profile.name}</b>
       </div>
 
       <div className="profile-grid">

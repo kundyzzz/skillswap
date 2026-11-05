@@ -7,11 +7,13 @@ React + Vite frontend for SkillSwap (Team 15). Sprint 1 scope, built from our Fi
 | Route | Screen (Figma) | User stories |
 |---|---|---|
 | `#/auth` | Sign up and log in | registration, login |
-| `#/setup` | Profile setup (step 1 of 2) | US-02, US-11 (contact) |
+| `#/setup` | Profile setup (step 1 of 2) | US-02, US-11 (Show my contact) |
 | `#/skills` | My skills (I can teach / I want to learn) | US-03, US-04, US-05 |
+| `#/` | Home matches (Mutual match / Can teach you) | US-06 |
+| `#/search` | Search students by subject and category | US-07 |
+| `#/board` | Request board, "I can help" | US-08, US-09 |
 | `#/profile` | My profile with missing-field states | US-01 |
-| `#/users/:id` | Another student's profile | US-01 |
-| `#/` | Home (next steps; matches in Sprint 2) | — |
+| `#/users/:id` | Student profile + Contact button | US-01, US-10 |
 
 ## Run locally
 
@@ -44,8 +46,16 @@ src/
   index.css         design tokens and styles from Figma
 ```
 
-## Notes for backend (Sprint 2)
+## Database updates
 
-- There is no endpoint that returns my own WhatsApp/Telegram, so the contact field in Profile setup cannot be pre-filled. A `GET /users/me` that includes `whatsapp` and `telegram` would fix this.
-- Matching (`GET /matches`), search, request board and contact are not connected yet: they are planned for Sprint 2 in `docs/api.md`.
-- Profile photo upload from Figma is not supported by the API yet, so initials are used as the avatar.
+For an existing `skillswap_db`, run once (in this order):
+
+1. `backend/migrations/001_show_contact.sql`
+2. `backend/migrations/002_request_board.sql`
+3. optional demo data: `backend/demo-seed.sql` (5 demo students, password `password123`)
+
+A new database only needs `schema.sql`, `seed.sql` (and optionally `demo-seed.sql`).
+
+## Notes
+
+- Profile photo upload from Figma is not in the API, so initials are used as the avatar.

@@ -7,6 +7,8 @@ import Home from './pages/Home';
 import ProfileSetup from './pages/ProfileSetup';
 import MySkills from './pages/MySkills';
 import ProfilePage from './pages/ProfilePage';
+import SearchPage from './pages/SearchPage';
+import BoardPage from './pages/BoardPage';
 
 const PUBLIC_ROUTES = ['/auth'];
 
@@ -34,6 +36,10 @@ export default function App() {
     content = <ProfileSetup />;
   } else if (path === '/skills') {
     content = <MySkills />;
+  } else if (path === '/search') {
+    content = <SearchPage />;
+  } else if (path === '/board') {
+    content = <BoardPage />;
   } else if (path === '/profile') {
     content = <ProfilePage />;
   } else if (path.startsWith('/users/')) {

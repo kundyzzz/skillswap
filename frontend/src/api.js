@@ -97,3 +97,19 @@ export const updateMySkill = (id, data) =>
   request(`/users/me/skills/${id}`, { method: 'PUT', body: data, auth: true });
 export const deleteMySkill = (id) =>
   request(`/users/me/skills/${id}`, { method: 'DELETE', auth: true });
+
+// 5. Sprint 2: matching, search, request board
+export const getMatches = () => request('/matches', { auth: true });
+export const searchStudents = (subject = '', category = '') => {
+  const params = new URLSearchParams();
+  if (subject) params.set('subject', subject);
+  if (category) params.set('category', category);
+  return request(`/search?${params.toString()}`, { auth: true });
+};
+export const getRequests = () => request('/requests', { auth: true });
+export const createRequest = (title, category_id) =>
+  request('/requests', { method: 'POST', body: { title, category_id }, auth: true });
+export const respondToRequest = (id) =>
+  request(`/requests/${id}/responses`, { method: 'POST', auth: true });
+export const setRequestStatus = (id, status) =>
+  request(`/requests/${id}`, { method: 'PATCH', body: { status }, auth: true });

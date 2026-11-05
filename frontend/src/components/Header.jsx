@@ -57,6 +57,12 @@ export default function Header({ path }) {
         <Link to="/" className={path === '/' ? 'active' : ''}>
           Home
         </Link>
+        <Link to="/search" className={isActive('/search')}>
+          Search
+        </Link>
+        <Link to="/board" className={isActive('/board')}>
+          Board
+        </Link>
         <Link to="/skills" className={isActive('/skills')}>
           My skills
         </Link>
