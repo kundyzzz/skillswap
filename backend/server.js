@@ -299,7 +299,7 @@ function getUserIdFromToken(req) {
 // The request between two students, if any (accepted wins over pending/declined).
 async function findContactRequest(a, b) {
   const result = await pool.query(
-    `SELECT id, from_user, to_user, status, message, created_at
+    `SELECT id, from_user, to_user, status, message, created_at, responded_at, attempts
      FROM contact_requests
      WHERE (from_user = $1 AND to_user = $2) OR (from_user = $2 AND to_user = $1)
      ORDER BY (status = 'accepted') DESC, created_at DESC
@@ -320,6 +320,30 @@ async function isMutualMatch(a, b) {
     [a, b]
   );
   return result.rows[0].a_to_b && result.rows[0].b_to_a;
+}
+
+// Pressing "I can help" on someone's request = agreeing that this author may contact you.
+async function offeredHelpTo(helper, author) {
+  const result = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM request_responses rr
+       JOIN requests r ON r.id = rr.request_id
+       WHERE rr.user_id = $1 AND r.user_id = $2
+     ) AS helped`,
+    [helper, author]
+  );
+  return result.rows[0].helped;
+}
+
+// After a decline the sender may ask once more, 3 days later (2 attempts in total).
+const RETRY_AFTER_DAYS = 3;
+const MAX_ATTEMPTS = 2;
+
+function retryInfo(link) {
+  if (!link || link.status !== 'declined') return { final: false, retry_at: null, can_retry: false };
+  if (link.attempts >= MAX_ATTEMPTS) return { final: true, retry_at: null, can_retry: false };
+  const retryAt = new Date(new Date(link.responded_at || link.created_at).getTime() + RETRY_AFTER_DAYS * 864e5);
+  return { final: false, retry_at: retryAt.toISOString(), can_retry: Date.now() >= retryAt.getTime() };
 }
 
 // Own full profile, including contact fields and the sharing switch.
@@ -396,7 +420,8 @@ app.get('/api/users/:id/contact', async (req, res) => {
 
     if (!contact.show_contact) {
       const link = await findContactRequest(userId, contact.id);
-      if (!link || link.status !== 'accepted') {
+      const accepted = link && link.status === 'accepted';
+      if (!accepted && !(await offeredHelpTo(contact.id, userId))) {
         return res.status(403).json({
           error: { code: 'CONTACT_HIDDEN', message: 'This student shares contact details only after accepting a request' }
         });
@@ -468,25 +493,34 @@ app.get('/api/users/:id', async (req, res) => {
     const viewerId = getUserIdFromToken(req);
     let contactRequest = null;
     let mutual = false;
+    let offeredHelp = false;
 
     if (viewerId && viewerId !== profile.id) {
       const link = await findContactRequest(viewerId, profile.id);
       if (link) {
+        const direction = link.from_user === viewerId ? 'outgoing' : 'incoming';
         contactRequest = {
           id: link.id,
           status: link.status,
-          direction: link.from_user === viewerId ? 'outgoing' : 'incoming',
-          message: link.message
+          direction,
+          message: link.message,
+          attempts: link.attempts,
+          // only the sender of a declined request gets retry details
+          ...(direction === 'outgoing' ? retryInfo(link) : {})
         };
       }
       mutual = await isMutualMatch(viewerId, profile.id);
+      offeredHelp = await offeredHelpTo(profile.id, viewerId);
     }
 
     return res.status(200).json({
       ...profile,
       // contact_available = the viewer can open the contact right now
       contact_available:
-        profile.contact_public || (profile.has_contact && contactRequest?.status === 'accepted'),
+        profile.contact_public ||
+        (profile.has_contact && (contactRequest?.status === 'accepted' || offeredHelp)),
+      // they pressed "I can help" on one of the viewer's requests
+      offered_help: offeredHelp,
       contact_request: contactRequest,
       mutual_match: mutual,
       skills: skillsResult.rows
@@ -1517,10 +1551,39 @@ app.post('/api/contact-requests', async (req, res) => {
     }
 
     const existing = await findContactRequest(userId, to_user_id);
-    if (existing) {
+
+    // My earlier request was declined: one more try is allowed after 3 days.
+    if (existing && existing.status === 'declined' && existing.from_user === userId) {
+      const retry = retryInfo(existing);
+      if (retry.final) {
+        return res.status(409).json({
+          error: { code: 'DECLINED_FINAL', message: 'This student declined twice. You cannot send another request' }
+        });
+      }
+      if (!retry.can_retry) {
+        return res.status(409).json({
+          error: {
+            code: 'DECLINED_WAIT',
+            message: `You can ask again after ${retry.retry_at.slice(0, 10)}`,
+            retry_at: retry.retry_at
+          }
+        });
+      }
+      const again = await pool.query(
+        `UPDATE contact_requests
+         SET status = 'pending', attempts = attempts + 1, message = $2,
+             created_at = NOW(), responded_at = NULL, seen_by_sender = false
+         WHERE id = $1
+         RETURNING id, status, message, created_at, attempts`,
+        [existing.id, cleanMessage || null]
+      );
+      return res.status(201).json(again.rows[0]);
+    }
+
+    // I declined THEIR request earlier and now ask them myself: allowed (a new request).
+    if (existing && !(existing.status === 'declined' && existing.from_user !== userId)) {
       const codes = {
         accepted: ['ALREADY_ACCEPTED', 'You can already see this contact'],
-        declined: ['DECLINED', 'This student declined your request'],
         pending:
           existing.from_user === userId
             ? ['ALREADY_REQUESTED', 'You already sent a request']
@@ -1587,7 +1650,8 @@ app.patch('/api/contact-requests/:id', async (req, res) => {
   }
 });
 
-// The sender cancels a request that is still pending.
+// The sender cancels a request that is still pending,
+// or either student removes an accepted contact (they can request again later).
 app.delete('/api/contact-requests/:id', async (req, res) => {
   const userId = requireUser(req, res);
   if (!userId) return;
@@ -1601,14 +1665,16 @@ app.delete('/api/contact-requests/:id', async (req, res) => {
   try {
     const result = await pool.query(
       `DELETE FROM contact_requests
-       WHERE id = $1 AND from_user = $2 AND status = 'pending'
+       WHERE id = $1
+         AND ((from_user = $2 AND status = 'pending')
+           OR (status = 'accepted' AND (from_user = $2 OR to_user = $2)))
        RETURNING id`,
       [req.params.id, userId]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({
-        error: { code: 'REQUEST_NOT_FOUND', message: 'Request not found or already answered' }
+        error: { code: 'REQUEST_NOT_FOUND', message: 'Request not found' }
       });
     }
 

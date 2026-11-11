@@ -253,6 +253,12 @@ function RequestCard({ request: r, isMine, onChange }) {
         </div>
       )}
 
+      {!isMine && !r.responded_by_me && !closed && (
+        <p className="muted" style={{ margin: '8px 0 0', textAlign: 'right' }}>
+          {r.author.name.split(' ')[0]} will see your contact if you press “I can help”.
+        </p>
+      )}
+
       {error && (
         <div className="alert error section-gap" role="alert" style={{ marginBottom: 0 }}>
           {error}

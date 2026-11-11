@@ -162,6 +162,8 @@ export const answerContactRequest = (id, status) =>
   request(`/contact-requests/${id}`, { method: 'PATCH', body: { status }, auth: true });
 export const cancelContactRequest = (id) =>
   request(`/contact-requests/${id}`, { method: 'DELETE', auth: true });
+export const removeContact = (requestId) =>
+  request(`/contact-requests/${requestId}`, { method: 'DELETE', auth: true });
 export const markContactAnswersSeen = () =>
   request('/contact-requests/seen', { method: 'POST', auth: true });
 

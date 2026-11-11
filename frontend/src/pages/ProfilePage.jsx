@@ -5,6 +5,8 @@ import { useAuth } from '../auth';
 import { Link } from '../router';
 import Page from '../components/Page';
 import Avatar from '../components/Avatar';
+import UndoStrip from '../components/UndoStrip';
+import { useUndo } from '../useUndo';
 import { isFilled, LEVELS, PROFILE_FIELDS, profileCompletion } from '../utils';
 
 const levelLabel = Object.fromEntries(LEVELS.map((l) => [l.value, l.label]));
@@ -183,6 +185,17 @@ function ContactBox({ profile, onChange }) {
   const [busy, setBusy] = useState(false);
   const firstName = profile.name.split(' ')[0];
   const req = profile.contact_request;
+  const undo = useUndo(5000);
+
+  // Accept: at once. Decline: 5 seconds to undo before it is sent.
+  const answerLater = (status) =>
+    status === 'accepted'
+      ? act(() => api.answerContactRequest(req.id, 'accepted'))
+      : undo.start(
+      req.id,
+      status === 'accepted' ? `You accepted ${firstName}'s request` : `You declined ${firstName}'s request`,
+      () => act(() => api.answerContactRequest(req.id, status))
+    );
 
   const act = async (fn) => {
     setBusy(true);
@@ -215,6 +228,11 @@ function ContactBox({ profile, onChange }) {
 
     // They asked for MY contact: answer right here.
     if (req && req.direction === 'incoming' && req.status === 'pending') {
+      if (undo.items[req.id]) {
+        return (
+          <UndoStrip label={undo.items[req.id].label} seconds={undo.secondsLeft(req.id)} onUndo={() => undo.undo(req.id)} />
+        );
+      }
       return (
         <div className="panel white request-box" data-testid="contact-incoming">
           <b>{firstName} asked for your contact</b>
@@ -223,10 +241,10 @@ function ContactBox({ profile, onChange }) {
             If you accept, you will both see each other&apos;s contacts.
           </p>
           <div className="row-gap">
-            <button className="btn primary small" disabled={busy} onClick={() => act(() => api.answerContactRequest(req.id, 'accepted'))}>
+            <button className="btn primary small" disabled={busy} onClick={() => answerLater('accepted')}>
               Accept
             </button>
-            <button className="btn small" disabled={busy} onClick={() => act(() => api.answerContactRequest(req.id, 'declined'))}>
+            <button className="btn small" disabled={busy} onClick={() => answerLater('declined')}>
               Decline
             </button>
           </div>
@@ -250,14 +268,28 @@ function ContactBox({ profile, onChange }) {
       );
     }
 
-    if (req && req.status === 'declined') {
-      return (
-        <p className="muted" data-testid="contact-declined">
-          {req.direction === 'outgoing'
-            ? `${firstName} declined your contact request.`
-            : `You declined ${firstName}'s contact request.`}
-        </p>
-      );
+    // After a decline: one more request is allowed 3 days later (2 attempts in total).
+    let retryNote = null;
+    if (req && req.status === 'declined' && req.direction === 'outgoing') {
+      if (req.final) {
+        return (
+          <p className="muted" data-testid="contact-declined">
+            Contact is not available.
+          </p>
+        );
+      }
+      if (!req.can_retry) {
+        const day = new Date(req.retry_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+        return (
+          <p className="muted" data-testid="contact-declined">
+            You can send a new request from {day}.
+          </p>
+        );
+      }
+      retryNote = 'You can send one more request.';
+    }
+    if (req && req.status === 'declined' && req.direction === 'incoming') {
+      retryNote = `You declined ${firstName}'s request earlier. You can still ask for their contact.`;
     }
 
     return (
@@ -270,6 +302,11 @@ function ContactBox({ profile, onChange }) {
         <p className="muted" style={{ marginTop: 0 }}>
           {firstName} shares contact details only after accepting a request.
         </p>
+        {retryNote && (
+          <div className="alert info" style={{ marginBottom: 10 }}>
+            <span>{retryNote}</span>
+          </div>
+        )}
         <textarea
           className="textarea"
           placeholder={`Hi ${firstName}! I would like to learn… I can help with…`}
@@ -307,10 +344,17 @@ function ContactBox({ profile, onChange }) {
   if (!contact) {
     return (
       <>
-        {req?.status === 'accepted' && (
+        {req?.status === 'accepted' ? (
           <p className="muted" style={{ marginTop: 0 }}>
             ✓ Contact request accepted
           </p>
+        ) : (
+          profile.offered_help &&
+          !profile.contact_public && (
+            <p className="muted" style={{ marginTop: 0 }} data-testid="offered-help">
+              ✓ {firstName} offered to help with your request
+            </p>
+          )
         )}
         <button className="btn primary block" onClick={load} disabled={busy}>
           {busy ? 'Loading…' : 'Contact'}
@@ -352,6 +396,20 @@ function MyContacts() {
   const [data, setData] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
+  const [hidden, setHidden] = useState([]); // notifications closed with ✕
+  const undo = useUndo(5000);
+
+  // ✕ on a contact: removed for both students after 5 seconds unless undone.
+  const remove = (c) =>
+    undo.start(c.request_id, `${c.user.name} removed from your contacts`, async () => {
+      try {
+        await api.removeContact(c.request_id);
+      } catch (e) {
+        setError(e.message);
+      }
+      api.announceRequestsChanged();
+      load();
+    });
 
   const load = () =>
     api
@@ -396,12 +454,11 @@ function MyContacts() {
   }
   if (!data) return null;
 
-  const fresh = data.outgoing.filter((r) => r.is_new);
+  const fresh = data.outgoing.filter((r) => r.is_new && !hidden.includes(r.id));
   const waiting = data.outgoing.filter((r) => r.status === 'pending');
-  const declined = data.outgoing.filter((r) => r.status === 'declined' && !r.is_new);
   const subtitle = (u) => [u.faculty, u.year && `Year ${u.year}`].filter(Boolean).join(' · ');
   const nothing =
-    data.contacts.length === 0 && waiting.length === 0 && declined.length === 0 && fresh.length === 0;
+    data.contacts.length === 0 && waiting.length === 0 && fresh.length === 0;
 
   return (
     <div className="panel white section-gap" data-testid="my-contacts">
@@ -434,6 +491,14 @@ function MyContacts() {
               </>
             )}
           </span>
+          <button
+            className="icon-btn"
+            aria-label="Close"
+            title="Close"
+            onClick={() => setHidden((h) => [...h, r.id])}
+          >
+            ×
+          </button>
         </div>
       ))}
 
@@ -448,18 +513,35 @@ function MyContacts() {
           <div className="small-caps" style={{ margin: '4px 0 6px' }}>
             Contacts · {data.contacts.length}
           </div>
-          {data.contacts.map((c) => (
-            <div key={c.request_id} className="contact-row">
-              <Avatar name={c.user.name} size={32} />
-              <div className="contact-request-body">
-                <b>{c.user.name}</b>
-                <div className="muted">{subtitle(c.user)}</div>
+          {data.contacts.map((c) =>
+            undo.items[c.request_id] ? (
+              <UndoStrip
+                key={c.request_id}
+                label={undo.items[c.request_id].label}
+                seconds={undo.secondsLeft(c.request_id)}
+                onUndo={() => undo.undo(c.request_id)}
+              />
+            ) : (
+              <div key={c.request_id} className="contact-row contact-row-x" data-testid="contact-row">
+                <Avatar name={c.user.name} size={32} />
+                <div className="contact-request-body">
+                  <b>{c.user.name}</b>
+                  <div className="muted">{subtitle(c.user)}</div>
+                </div>
+                <Link to={`/users/${c.user.id}`} className="btn small">
+                  Open contact
+                </Link>
+                <button
+                  className="icon-btn"
+                  aria-label={`Remove ${c.user.name} from contacts`}
+                  title="Remove from contacts"
+                  onClick={() => remove(c)}
+                >
+                  ×
+                </button>
               </div>
-              <Link to={`/users/${c.user.id}`} className="btn small">
-                Open contact
-              </Link>
-            </div>
-          ))}
+            )
+          )}
         </>
       )}
 
@@ -485,16 +567,6 @@ function MyContacts() {
         </>
       )}
 
-      {declined.length > 0 && (
-        <>
-          <div className="small-caps" style={{ margin: '14px 0 6px' }}>
-            Declined · {declined.length}
-          </div>
-          <p className="muted" style={{ margin: 0 }}>
-            {declined.map((r) => r.to.name).join(', ')}
-          </p>
-        </>
-      )}
     </div>
   );
 }

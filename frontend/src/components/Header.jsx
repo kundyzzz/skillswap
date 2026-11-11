@@ -53,7 +53,7 @@ export default function Header({ path }) {
           setAnswers(r.unseen || 0);
         })
         .catch(() => {});
-    load(false);
+    load(true); // always count fresh, otherwise the badge can show an old number
     const onChange = () => load(true);
     window.addEventListener(api.REQUESTS_CHANGED, onChange);
     return () => {

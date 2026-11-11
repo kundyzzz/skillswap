@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS contact_requests (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     responded_at TIMESTAMPTZ,
     seen_by_sender BOOLEAN NOT NULL DEFAULT false,
+    attempts INTEGER NOT NULL DEFAULT 1,
     UNIQUE (from_user, to_user),
     CHECK (from_user <> to_user)
 );
