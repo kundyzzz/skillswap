@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import * as api from '../api';
 import { useAuth } from '../auth';
 import { Link, navigate } from '../router';
 import Avatar from './Avatar';
@@ -37,6 +38,30 @@ export default function Header({ path }) {
 
   useEffect(() => setOpen(false), [path]);
 
+  // US-12: requests waiting for my answer (badge on Home) and new answers to my requests (badge on Profile).
+  const [waiting, setWaiting] = useState(0);
+  const [answers, setAnswers] = useState(0);
+  useEffect(() => {
+    if (!user) return undefined;
+    let alive = true;
+    const load = (fresh) =>
+      api
+        .getContactRequests({ fresh })
+        .then((r) => {
+          if (!alive) return;
+          setWaiting(r.incoming.length);
+          setAnswers(r.unseen || 0);
+        })
+        .catch(() => {});
+    load(false);
+    const onChange = () => load(true);
+    window.addEventListener(api.REQUESTS_CHANGED, onChange);
+    return () => {
+      alive = false;
+      window.removeEventListener(api.REQUESTS_CHANGED, onChange);
+    };
+  }, [user, path]);
+
   if (!user) {
     return (
       <header className="header">
@@ -56,6 +81,11 @@ export default function Header({ path }) {
       <nav className="nav">
         <Link to="/" className={path === '/' ? 'active' : ''}>
           Home
+          {waiting > 0 && (
+            <span className="nav-badge" aria-label={`${waiting} contact requests waiting`}>
+              {waiting}
+            </span>
+          )}
         </Link>
         <Link to="/search" className={isActive('/search')}>
           Search
@@ -68,6 +98,11 @@ export default function Header({ path }) {
         </Link>
         <Link to="/profile" className={isActive('/profile')}>
           Profile
+          {answers > 0 && (
+            <span className="nav-badge" aria-label={`${answers} new answers to your contact requests`}>
+              {answers}
+            </span>
+          )}
         </Link>
       </nav>
       <div className="user-menu" ref={menuRef}>

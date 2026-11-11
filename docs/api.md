@@ -194,9 +194,38 @@ Remove a skill from own profile. Protected.
 
 Response: 204 No Content.
 
-## 5. Planned for Sprint 2 (contract only, not implemented yet)
+## 5. Sprint 2 (implemented)
 
-- GET /matches: complementary students (my teach = their learn and vice versa)
-- GET /search?subject=: search/browse by subject
-- GET /requests, POST /requests: public skill request board
-- GET /users/:id/contact: WhatsApp/Telegram contact after a match
+- GET /matches: complementary students, mutual first (US-06)
+- GET /search?subject=&category=: students who teach a subject; `subject` also matches a student's name (US-07)
+- GET /requests, POST /requests, PATCH /requests/:id: public request board (US-08)
+- POST /requests/:id/responses, DELETE /requests/:id/responses: "I can help" and cancelling it (US-09)
+- GET /users/:id/contact: Telegram/WhatsApp (US-10, US-11, US-12 rules below)
+
+## 6. Contact requests (US-12)
+
+A contact is visible when its owner shares it publicly (`show_contact = true`) or after the owner
+accepted a contact request (either direction). A mutual match does not open a hidden contact; it is
+only shown as `mutual_match: true` to help the owner decide. Run `migrations/003_contact_requests.sql` once.
+
+GET /users/:id now also returns, for the logged-in viewer: `has_contact`, `contact_public`,
+`contact_available` (viewer can open it now), `mutual_match`, and
+`contact_request: { id, status: pending|accepted|declined, direction: outgoing|incoming, message } | null`.
+
+### GET /contact-requests
+
+Protected. Response (200): `{ "incoming": [pending requests to me, with "from" card and "mutual_match"], "outgoing": [requests I sent] }`.
+
+### POST /contact-requests
+
+Protected. Request: `{ "to_user_id": "uuid", "message": "optional, up to 200 chars" }`. Response (201): the request.
+Errors: 400 NO_CONTACT, 400 CONTACT_PUBLIC, 400 OWN_PROFILE, 404 USER_NOT_FOUND,
+409 ALREADY_REQUESTED / ALREADY_ACCEPTED / DECLINED / INCOMING_PENDING.
+
+### PATCH /contact-requests/:id
+
+Protected, receiver only. Request: `{ "status": "accepted" | "declined" }`. Response (200). 404 when not pending.
+
+### DELETE /contact-requests/:id
+
+Protected, sender only, while pending. Response: 204 No Content.

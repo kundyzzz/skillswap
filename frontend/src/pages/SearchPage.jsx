@@ -53,18 +53,18 @@ export default function SearchPage() {
 
   return (
     <Page>
-      <h1 className="page-title">Find a student by subject</h1>
+      <h1 className="page-title">Find a student</h1>
       <p className="muted" style={{ marginTop: 0 }}>
-        Search everyone who can teach a subject, even without a mutual match.
+        Search by subject or by name, even without a mutual match.
       </p>
 
       <form className="card search-form" onSubmit={submit} role="search">
         <input
           className="input"
-          placeholder='Subject, e.g. "Physics"'
+          placeholder='Subject or name, e.g. "Physics" or "Yasmin"'
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
-          aria-label="Subject"
+          aria-label="Subject or name"
         />
         <select
           className="select"
@@ -96,7 +96,7 @@ export default function SearchPage() {
         <div className="panel white section-gap center-text" data-testid="no-results">
           <h3>No students found</h3>
           <p className="muted">
-            Nobody teaches {lastQuery ? `"${lastQuery}"` : 'this'} yet. Try another subject or post it on
+            No student or subject matches {lastQuery ? `"${lastQuery}"` : 'this'} yet. Try another search or post it on
             the request board.
           </p>
           <button className="btn" type="button" onClick={clear}>

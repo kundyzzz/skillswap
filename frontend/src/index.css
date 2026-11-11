@@ -698,6 +698,58 @@ h3 {
 @keyframes spinner-hint {
   to { opacity: 1; }
 }
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--orange);
+  color: var(--white);
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.request-box {
+  text-align: left;
+}
+.request-box .textarea {
+  width: 100%;
+}
+.request-message {
+  margin: 8px 0 0;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+.contact-request {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid rgba(30, 42, 30, 0.15);
+}
+.contact-request:first-child {
+  border-top: none;
+}
+.contact-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid rgba(30, 42, 30, 0.12);
+}
+.contact-request-body {
+  min-width: 0;
+}
+@media (max-width: 860px) {
+  .contact-request { grid-template-columns: auto 1fr; }
+  .contact-request > .row-gap { grid-column: 1 / -1; }
+}
 .row-gap {
   display: flex;
   align-items: center;

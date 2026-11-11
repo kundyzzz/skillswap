@@ -113,7 +113,9 @@ export const login = (email, password) =>
 export const getMe = () => request('/auth/me', { auth: true });
 
 // 2. Profile
-export const getUser = (id) => request(`/users/${id}`, { auth: true, cacheFor: 'short' });
+// fresh: skip the cache (another student's profile can change because of their answer to my request)
+export const getUser = (id, { fresh = false } = {}) =>
+  request(`/users/${id}`, { auth: true, cacheFor: fresh ? undefined : 'short' });
 export const getMyProfile = () => request('/users/me', { auth: true }); // includes contact + show_contact
 export const getContact = (id) => request(`/users/${id}/contact`, { auth: true });
 export const updateMe = (data) => request('/users/me', { method: 'PUT', body: data, auth: true });
@@ -150,3 +152,19 @@ export const cancelResponse = (id) =>
   request(`/requests/${id}/responses`, { method: 'DELETE', auth: true });
 export const setRequestStatus = (id, status) =>
   request(`/requests/${id}`, { method: 'PATCH', body: { status }, auth: true });
+
+// 6. US-12: contact requests (a hidden contact opens only after the owner accepts)
+export const getContactRequests = ({ fresh = false } = {}) =>
+  request('/contact-requests', { auth: true, cacheFor: fresh ? undefined : 'short' });
+export const sendContactRequest = (to_user_id, message) =>
+  request('/contact-requests', { method: 'POST', body: { to_user_id, message }, auth: true });
+export const answerContactRequest = (id, status) =>
+  request(`/contact-requests/${id}`, { method: 'PATCH', body: { status }, auth: true });
+export const cancelContactRequest = (id) =>
+  request(`/contact-requests/${id}`, { method: 'DELETE', auth: true });
+export const markContactAnswersSeen = () =>
+  request('/contact-requests/seen', { method: 'POST', auth: true });
+
+// Lets the header badge know that the number of waiting requests may have changed.
+export const REQUESTS_CHANGED = 'skillswap:contact-requests-changed';
+export const announceRequestsChanged = () => window.dispatchEvent(new Event(REQUESTS_CHANGED));

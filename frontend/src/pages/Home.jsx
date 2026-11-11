@@ -5,6 +5,7 @@ import { useAuth } from '../auth';
 import { Link } from '../router';
 import Page from '../components/Page';
 import StudentCard from '../components/StudentCard';
+import Avatar from '../components/Avatar';
 import { isFilled, PROFILE_FIELDS, profileCompletion } from '../utils';
 
 export default function Home() {
@@ -52,6 +53,8 @@ export default function Home() {
         </div>
         <span className="badge">Profile completion: {completion}%</span>
       </div>
+
+      <ContactRequests />
 
       {completion < 100 && (
         <div className="alert info section-gap" data-testid="steps-banner">
@@ -137,5 +140,78 @@ export default function Home() {
         </>
       )}
     </Page>
+  );
+}
+
+// US-12: contact requests waiting for my answer. Hidden when there are none.
+function ContactRequests() {
+  const [items, setItems] = useState([]);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api
+      .getContactRequests({ fresh: true })
+      .then((r) => setItems(r.incoming))
+      .catch(() => {});
+  }, []);
+
+  const answer = async (id, status) => {
+    setBusyId(id);
+    setError('');
+    try {
+      await api.answerContactRequest(id, status);
+      setItems((list) => list.filter((r) => r.id !== id));
+      api.announceRequestsChanged();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (items.length === 0) return null;
+
+  return (
+    <section className="panel white section-gap" data-testid="contact-requests">
+      <h3 style={{ marginTop: 0 }}>
+        Contact requests <span className="nav-badge">{items.length}</span>
+      </h3>
+      <p className="muted" style={{ marginTop: 0 }}>
+        If you accept, you will both see each other&apos;s Telegram / WhatsApp.
+      </p>
+      <div className="request-list">
+        {items.map((r) => (
+          <div key={r.id} className="contact-request" data-testid="contact-request">
+            <Avatar name={r.from.name} size={40} />
+            <div className="contact-request-body">
+              <div className="row-gap">
+                <Link to={`/users/${r.from.id}`} className="link-btn">
+                  <b>{r.from.name}</b>
+                </Link>
+                {r.mutual_match && <span className="match-badge mutual">Mutual match</span>}
+              </div>
+              <div className="muted">
+                {[r.from.faculty, r.from.year && `Year ${r.from.year}`].filter(Boolean).join(' · ')}
+              </div>
+              {r.message && <p className="request-message">“{r.message}”</p>}
+            </div>
+            <div className="row-gap">
+              <button className="btn primary small" disabled={busyId === r.id} onClick={() => answer(r.id, 'accepted')}>
+                Accept
+              </button>
+              <button className="btn small" disabled={busyId === r.id} onClick={() => answer(r.id, 'declined')}>
+                Decline
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {error && (
+        <div className="alert error section-gap" role="alert">
+          {error}
+        </div>
+      )}
+    </section>
   );
 }

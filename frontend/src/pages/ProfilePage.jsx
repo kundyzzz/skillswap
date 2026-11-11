@@ -21,13 +21,21 @@ export default function ProfilePage({ userId }) {
   useEffect(() => {
     setProfile(null);
     setError('');
-    Promise.all([api.getUser(id), api.getCategories()])
+    Promise.all([api.getUser(id, { fresh: !isMe }), api.getCategories()])
       .then(([p, cats]) => {
         setProfile(p);
         setCategories(cats);
       })
       .catch((e) => setError(e.code === 'USER_NOT_FOUND' ? 'This student does not exist.' : e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Reload the profile after sending / answering a contact request.
+  const reload = () =>
+    api
+      .getUser(id, { fresh: true })
+      .then(setProfile)
+      .catch((e) => setError(e.message));
 
   const categoryName = useMemo(
     () => Object.fromEntries(categories.map((c) => [c.id, c.name])),
@@ -93,7 +101,7 @@ export default function ProfilePage({ userId }) {
                 Edit skills
               </Link>
               <p className="muted" data-testid="my-contact-status" style={{ marginBottom: 0 }}>
-                Contact: <b>{profile.contact_available ? 'visible to students' : 'hidden'}</b>
+                Contact: <b>{profile.contact_available ? 'visible to students' : 'shared on request'}</b>
                 {' · '}
                 <Link to="/setup" className="link-btn">
                   change
@@ -101,7 +109,7 @@ export default function ProfilePage({ userId }) {
               </p>
             </>
           ) : (
-            <ContactBox userId={profile.id} name={profile.name} available={profile.contact_available} />
+            <ContactBox profile={profile} onChange={reload} />
           )}
         </aside>
 
@@ -144,6 +152,8 @@ export default function ProfilePage({ userId }) {
             </div>
             <SkillChips skills={learn} categoryName={categoryName} empty={isMe ? 'No learning skills yet' : '—'} />
           </div>
+
+          {isMe && <MyContacts />}
         </section>
       </div>
     </Page>
@@ -163,18 +173,122 @@ function SkillChips({ skills, categoryName, empty }) {
   );
 }
 
-// US-10: open a student's Telegram/WhatsApp (only if they share it — US-11).
-function ContactBox({ userId, name, available }) {
+// US-10: open a student's Telegram/WhatsApp.
+// US-11: shared publicly -> Contact button right away.
+// US-12: hidden -> Request contact; the owner accepts or declines (mutual match only highlights it).
+function ContactBox({ profile, onChange }) {
   const [contact, setContact] = useState(null);
+  const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const firstName = name.split(' ')[0];
+  const firstName = profile.name.split(' ')[0];
+  const req = profile.contact_request;
 
-  if (!available) {
+  const act = async (fn) => {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+      api.announceRequestsChanged();
+      await onChange();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const errorBox = error && (
+    <div className="alert error section-gap" role="alert" style={{ textAlign: 'left' }}>
+      {error}
+    </div>
+  );
+
+  if (!profile.contact_available) {
+    if (!profile.has_contact) {
+      return (
+        <p className="muted" data-testid="contact-hidden">
+          {firstName} has not added contact details yet.
+        </p>
+      );
+    }
+
+    // They asked for MY contact: answer right here.
+    if (req && req.direction === 'incoming' && req.status === 'pending') {
+      return (
+        <div className="panel white request-box" data-testid="contact-incoming">
+          <b>{firstName} asked for your contact</b>
+          {req.message && <p className="request-message">“{req.message}”</p>}
+          <p className="muted" style={{ marginTop: 6 }}>
+            If you accept, you will both see each other&apos;s contacts.
+          </p>
+          <div className="row-gap">
+            <button className="btn primary small" disabled={busy} onClick={() => act(() => api.answerContactRequest(req.id, 'accepted'))}>
+              Accept
+            </button>
+            <button className="btn small" disabled={busy} onClick={() => act(() => api.answerContactRequest(req.id, 'declined'))}>
+              Decline
+            </button>
+          </div>
+          {errorBox}
+        </div>
+      );
+    }
+
+    if (req && req.direction === 'outgoing' && req.status === 'pending') {
+      return (
+        <div className="panel white request-box" data-testid="contact-pending">
+          <b>Request sent</b>
+          <p className="muted" style={{ marginTop: 6 }}>
+            Waiting for {firstName} to accept. You will see the contact here.
+          </p>
+          <button className="btn small" disabled={busy} onClick={() => act(() => api.cancelContactRequest(req.id))}>
+            {busy ? 'Cancelling…' : 'Cancel request'}
+          </button>
+          {errorBox}
+        </div>
+      );
+    }
+
+    if (req && req.status === 'declined') {
+      return (
+        <p className="muted" data-testid="contact-declined">
+          {req.direction === 'outgoing'
+            ? `${firstName} declined your contact request.`
+            : `You declined ${firstName}'s contact request.`}
+        </p>
+      );
+    }
+
     return (
-      <p className="muted" data-testid="contact-hidden">
-        {firstName} does not share contact details yet.
-      </p>
+      <div className="request-box" data-testid="contact-request-form">
+        {profile.mutual_match && (
+          <div style={{ marginBottom: 10 }}>
+            <span className="match-badge mutual">Mutual match — you can help each other</span>
+          </div>
+        )}
+        <p className="muted" style={{ marginTop: 0 }}>
+          {firstName} shares contact details only after accepting a request.
+        </p>
+        <textarea
+          className="textarea"
+          placeholder={`Hi ${firstName}! I would like to learn… I can help with…`}
+          value={message}
+          maxLength={200}
+          onChange={(e) => setMessage(e.target.value)}
+          style={{ minHeight: 64 }}
+          aria-label="Message (optional)"
+        />
+        <div className="muted" style={{ textAlign: 'right' }}>{message.length}/200</div>
+        <button
+          className="btn primary block"
+          disabled={busy}
+          onClick={() => act(() => api.sendContactRequest(profile.id, message.trim()))}
+        >
+          {busy ? 'Sending…' : 'Request contact'}
+        </button>
+        {errorBox}
+      </div>
     );
   }
 
@@ -182,7 +296,7 @@ function ContactBox({ userId, name, available }) {
     setBusy(true);
     setError('');
     try {
-      setContact(await api.getContact(userId));
+      setContact(await api.getContact(profile.id));
     } catch (e) {
       setError(e.code === 'CONTACT_HIDDEN' ? `${firstName} has hidden their contact.` : e.message);
     } finally {
@@ -193,14 +307,15 @@ function ContactBox({ userId, name, available }) {
   if (!contact) {
     return (
       <>
+        {req?.status === 'accepted' && (
+          <p className="muted" style={{ marginTop: 0 }}>
+            ✓ Contact request accepted
+          </p>
+        )}
         <button className="btn primary block" onClick={load} disabled={busy}>
           {busy ? 'Loading…' : 'Contact'}
         </button>
-        {error && (
-          <div className="alert error section-gap" role="alert">
-            {error}
-          </div>
-        )}
+        {errorBox}
       </>
     );
   }
@@ -228,6 +343,158 @@ function ContactBox({ userId, name, available }) {
       <p className="muted" style={{ marginBottom: 0 }}>
         Meet in a public university space for your first exchange.
       </p>
+    </div>
+  );
+}
+
+// US-12: everyone I exchanged contacts with, my sent requests and their answers.
+function MyContacts() {
+  const [data, setData] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = () =>
+    api
+      .getContactRequests({ fresh: true })
+      .then((d) => {
+        setData(d);
+        // Opening this page = the new answers are seen (the badge on Profile goes away).
+        if (d.unseen > 0) {
+          api
+            .markContactAnswersSeen()
+            .then(api.announceRequestsChanged)
+            .catch(() => {});
+        }
+      })
+      .catch((e) => setError(e.message));
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const cancel = async (id) => {
+    setBusyId(id);
+    setError('');
+    try {
+      await api.cancelContactRequest(id);
+      api.announceRequestsChanged();
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (error) {
+    return (
+      <div className="alert error section-gap" role="alert">
+        {error}
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const fresh = data.outgoing.filter((r) => r.is_new);
+  const waiting = data.outgoing.filter((r) => r.status === 'pending');
+  const declined = data.outgoing.filter((r) => r.status === 'declined' && !r.is_new);
+  const subtitle = (u) => [u.faculty, u.year && `Year ${u.year}`].filter(Boolean).join(' · ');
+  const nothing =
+    data.contacts.length === 0 && waiting.length === 0 && declined.length === 0 && fresh.length === 0;
+
+  return (
+    <div className="panel white section-gap" data-testid="my-contacts">
+      <h3 style={{ marginTop: 0 }}>My contacts</h3>
+
+      {data.incoming.length > 0 && (
+        <div className="alert info" style={{ marginBottom: 12 }}>
+          <span className="dot" />
+          <span>
+            {data.incoming.length} {data.incoming.length === 1 ? 'student is' : 'students are'} waiting for your
+            answer ·{' '}
+            <Link to="/" className="link-btn">
+              Answer on Home
+            </Link>
+          </span>
+        </div>
+      )}
+
+      {fresh.map((r) => (
+        <div key={r.id} className={`alert ${r.status === 'accepted' ? 'success' : 'info'}`} style={{ marginBottom: 12 }}>
+          <span>
+            {r.status === 'accepted' ? '✓ ' : ''}
+            <b>{r.to.name}</b> {r.status === 'accepted' ? 'accepted' : 'declined'} your contact request
+            {r.status === 'accepted' && (
+              <>
+                {' · '}
+                <Link to={`/users/${r.to.id}`} className="link-btn">
+                  Open contact
+                </Link>
+              </>
+            )}
+          </span>
+        </div>
+      ))}
+
+      {nothing && (
+        <p className="muted" style={{ margin: 0 }}>
+          No contacts yet. Open a student&apos;s profile and press Contact or Request contact.
+        </p>
+      )}
+
+      {data.contacts.length > 0 && (
+        <>
+          <div className="small-caps" style={{ margin: '4px 0 6px' }}>
+            Contacts · {data.contacts.length}
+          </div>
+          {data.contacts.map((c) => (
+            <div key={c.request_id} className="contact-row">
+              <Avatar name={c.user.name} size={32} />
+              <div className="contact-request-body">
+                <b>{c.user.name}</b>
+                <div className="muted">{subtitle(c.user)}</div>
+              </div>
+              <Link to={`/users/${c.user.id}`} className="btn small">
+                Open contact
+              </Link>
+            </div>
+          ))}
+        </>
+      )}
+
+      {waiting.length > 0 && (
+        <>
+          <div className="small-caps" style={{ margin: '14px 0 6px' }}>
+            Waiting for an answer · {waiting.length}
+          </div>
+          {waiting.map((r) => (
+            <div key={r.id} className="contact-row">
+              <Avatar name={r.to.name} size={32} />
+              <div className="contact-request-body">
+                <Link to={`/users/${r.to.id}`} className="link-btn">
+                  <b>{r.to.name}</b>
+                </Link>
+                <div className="muted">Request sent</div>
+              </div>
+              <button className="btn small" disabled={busyId === r.id} onClick={() => cancel(r.id)}>
+                Cancel
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+
+      {declined.length > 0 && (
+        <>
+          <div className="small-caps" style={{ margin: '14px 0 6px' }}>
+            Declined · {declined.length}
+          </div>
+          <p className="muted" style={{ margin: 0 }}>
+            {declined.map((r) => r.to.name).join(', ')}
+          </p>
+        </>
+      )}
     </div>
   );
 }

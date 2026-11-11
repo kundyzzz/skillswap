@@ -291,6 +291,37 @@ function getUserIdFromToken(req) {
   }
 }
 
+// ---------- US-12: contact requests ----------
+// A contact is visible when the owner shares it publicly (show_contact) OR
+// when a contact request between the two students was accepted (either direction).
+// A mutual match does NOT open a hidden contact by itself: it only highlights the request.
+
+// The request between two students, if any (accepted wins over pending/declined).
+async function findContactRequest(a, b) {
+  const result = await pool.query(
+    `SELECT id, from_user, to_user, status, message, created_at
+     FROM contact_requests
+     WHERE (from_user = $1 AND to_user = $2) OR (from_user = $2 AND to_user = $1)
+     ORDER BY (status = 'accepted') DESC, created_at DESC
+     LIMIT 1`,
+    [a, b]
+  );
+  return result.rows[0] || null;
+}
+
+// true when a teaches something b wants to learn AND b teaches something a wants to learn.
+async function isMutualMatch(a, b) {
+  const result = await pool.query(
+    `SELECT
+       EXISTS (SELECT 1 FROM user_skills t JOIN user_skills l ON l.skill_id = t.skill_id
+               WHERE t.user_id = $1 AND t.type = 'teach' AND l.user_id = $2 AND l.type = 'learn') AS a_to_b,
+       EXISTS (SELECT 1 FROM user_skills t JOIN user_skills l ON l.skill_id = t.skill_id
+               WHERE t.user_id = $2 AND t.type = 'teach' AND l.user_id = $1 AND l.type = 'learn') AS b_to_a`,
+    [a, b]
+  );
+  return result.rows[0].a_to_b && result.rows[0].b_to_a;
+}
+
 // Own full profile, including contact fields and the sharing switch.
 app.get('/api/users/me', async (req, res) => {
   const userId = getUserIdFromToken(req);
@@ -357,10 +388,19 @@ app.get('/api/users/:id/contact', async (req, res) => {
     const telegram = contact.telegram || null;
     const whatsapp = contact.whatsapp || null;
 
-    if (!contact.show_contact || (!telegram && !whatsapp)) {
+    if (!telegram && !whatsapp) {
       return res.status(403).json({
-        error: { code: 'CONTACT_HIDDEN', message: 'This student does not share contact details' }
+        error: { code: 'CONTACT_HIDDEN', message: 'This student has not added contact details yet' }
       });
+    }
+
+    if (!contact.show_contact) {
+      const link = await findContactRequest(userId, contact.id);
+      if (!link || link.status !== 'accepted') {
+        return res.status(403).json({
+          error: { code: 'CONTACT_HIDDEN', message: 'This student shares contact details only after accepting a request' }
+        });
+      }
     }
 
     return res.status(200).json({ user_id: contact.id, telegram, whatsapp });
@@ -388,10 +428,11 @@ app.get('/api/users/:id', async (req, res) => {
         p.faculty,
         p.year,
         p.bio,
+        COALESCE(NULLIF(p.telegram, '') IS NOT NULL OR NULLIF(p.whatsapp, '') IS NOT NULL, false) AS has_contact,
         COALESCE(
           p.show_contact AND (NULLIF(p.telegram, '') IS NOT NULL OR NULLIF(p.whatsapp, '') IS NOT NULL),
           false
-        ) AS contact_available
+        ) AS contact_public
        FROM users u
        LEFT JOIN profiles p ON p.user_id = u.id
        WHERE u.id = $1`,
@@ -422,11 +463,41 @@ app.get('/api/users/:id', async (req, res) => {
       [req.params.id]
     );
 
+    // What the person looking at this profile may do with the contact (US-10, US-11, US-12).
+    const profile = result.rows[0];
+    const viewerId = getUserIdFromToken(req);
+    let contactRequest = null;
+    let mutual = false;
+
+    if (viewerId && viewerId !== profile.id) {
+      const link = await findContactRequest(viewerId, profile.id);
+      if (link) {
+        contactRequest = {
+          id: link.id,
+          status: link.status,
+          direction: link.from_user === viewerId ? 'outgoing' : 'incoming',
+          message: link.message
+        };
+      }
+      mutual = await isMutualMatch(viewerId, profile.id);
+    }
+
     return res.status(200).json({
-      ...result.rows[0],
+      ...profile,
+      // contact_available = the viewer can open the contact right now
+      contact_available:
+        profile.contact_public || (profile.has_contact && contactRequest?.status === 'accepted'),
+      contact_request: contactRequest,
+      mutual_match: mutual,
       skills: skillsResult.rows
     });
   } catch (error) {
+    if (error.code === '22P02') {
+      return res.status(404).json({
+        error: { code: 'USER_NOT_FOUND', message: 'User not found' }
+      });
+    }
+
     console.error('Get profile error:', error.message);
 
     return res.status(500).json({
@@ -1025,9 +1096,30 @@ app.get('/api/search', async (req, res) => {
       byUser.get(row.user_id).push(row.name);
     }
 
+    // Search by student name too ("Yasmin"): a name match shows the student
+    // with everything they teach, even if they teach nothing yet.
+    if (subject) {
+      const byName = await pool.query(
+        `SELECT u.id AS user_id, s.name
+         FROM users u
+         LEFT JOIN user_skills us ON us.user_id = u.id AND us.type = 'teach'
+         LEFT JOIN skills s ON s.id = us.skill_id
+         WHERE u.id <> $1
+           AND u.name ILIKE '%' || $2 || '%'
+           AND ($3 = '' OR s.category_id::text = $3)
+         ORDER BY s.name`,
+        [userId, subject, category]
+      );
+      for (const row of byName.rows) {
+        if (!byUser.has(row.user_id)) byUser.set(row.user_id, []);
+        const list = byUser.get(row.user_id);
+        if (row.name && !list.includes(row.name)) list.push(row.name);
+      }
+    }
+
     const cards = await loadUserCards([...byUser.keys()]);
     const students = [...byUser.entries()]
-      .map(([id, teaches]) => ({ ...cards.get(id), teaches }))
+      .map(([id, teaches]) => ({ ...cards.get(id), teaches: teaches.sort() }))
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 50);
 
@@ -1280,6 +1372,251 @@ app.patch('/api/requests/:id', async (req, res) => {
     console.error('Update request error:', error.message);
     return res.status(500).json({
       error: { code: 'INTERNAL_ERROR', message: 'Failed to update request' }
+    });
+  }
+});
+
+// ---------- US-12: contact request endpoints ----------
+
+// Everything about my contact requests, for Home, Profile and the header badges:
+// incoming = waiting for my answer, outgoing = sent by me (any status),
+// contacts = accepted in either direction, unseen = answers to my requests I have not opened yet.
+app.get('/api/contact-requests', async (req, res) => {
+  const userId = requireUser(req, res);
+  if (!userId) return;
+
+  try {
+    const result = await pool.query(
+      `SELECT cr.id, cr.from_user, cr.to_user, cr.status, cr.message, cr.created_at,
+              cr.responded_at, cr.seen_by_sender
+       FROM contact_requests cr
+       WHERE cr.from_user = $1 OR cr.to_user = $1
+       ORDER BY COALESCE(cr.responded_at, cr.created_at) DESC
+       LIMIT 200`,
+      [userId]
+    );
+
+    const otherIds = result.rows.map(r => (r.from_user === userId ? r.to_user : r.from_user));
+    const cards = await loadUserCards([...new Set(otherIds)]);
+    const card = id => cards.get(id) || { id, name: 'Student' };
+
+    const incoming = [];
+    const outgoing = [];
+    const contacts = [];
+    let unseen = 0;
+
+    for (const row of result.rows) {
+      const mine = row.from_user === userId;
+      const other = mine ? row.to_user : row.from_user;
+
+      if (row.status === 'accepted') {
+        contacts.push({ request_id: row.id, since: row.responded_at, user: card(other) });
+      }
+
+      if (mine) {
+        const isNew = row.status !== 'pending' && !row.seen_by_sender;
+        if (isNew) unseen += 1;
+        outgoing.push({
+          id: row.id,
+          status: row.status,
+          message: row.message,
+          created_at: row.created_at,
+          responded_at: row.responded_at,
+          is_new: isNew,
+          to: card(other)
+        });
+      } else if (row.status === 'pending') {
+        incoming.push({
+          id: row.id,
+          status: row.status,
+          message: row.message,
+          created_at: row.created_at,
+          from: card(other),
+          mutual_match: await isMutualMatch(userId, other)
+        });
+      }
+    }
+
+    return res.status(200).json({ incoming, outgoing, contacts, unseen });
+  } catch (error) {
+    console.error('Get contact requests error:', error.message);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch contact requests' }
+    });
+  }
+});
+
+// The sender has seen the answers to their requests (clears the badge on Profile).
+app.post('/api/contact-requests/seen', async (req, res) => {
+  const userId = requireUser(req, res);
+  if (!userId) return;
+
+  try {
+    await pool.query(
+      `UPDATE contact_requests SET seen_by_sender = true
+       WHERE from_user = $1 AND status <> 'pending' AND seen_by_sender = false`,
+      [userId]
+    );
+    return res.status(204).send();
+  } catch (error) {
+    console.error('Mark contact requests seen error:', error.message);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to update requests' }
+    });
+  }
+});
+
+// Ask a student with a hidden contact to share it.
+app.post('/api/contact-requests', async (req, res) => {
+  const userId = requireUser(req, res);
+  if (!userId) return;
+
+  const { to_user_id, message } = req.body || {};
+  const cleanMessage = typeof message === 'string' ? message.trim() : '';
+
+  if (typeof to_user_id !== 'string' || !UUID_REGEX.test(to_user_id)) {
+    return res.status(400).json({
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid student ID' }
+    });
+  }
+  if (to_user_id === userId) {
+    return res.status(400).json({
+      error: { code: 'OWN_PROFILE', message: 'You cannot request your own contact' }
+    });
+  }
+  if (cleanMessage.length > 200) {
+    return res.status(400).json({
+      error: { code: 'VALIDATION_ERROR', message: 'Message must not exceed 200 characters' }
+    });
+  }
+
+  try {
+    const target = await pool.query(
+      `SELECT u.id,
+              COALESCE(NULLIF(p.telegram, '') IS NOT NULL OR NULLIF(p.whatsapp, '') IS NOT NULL, false) AS has_contact,
+              COALESCE(p.show_contact, false) AS show_contact
+       FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+       WHERE u.id = $1`,
+      [to_user_id]
+    );
+
+    if (target.rows.length === 0) {
+      return res.status(404).json({
+        error: { code: 'USER_NOT_FOUND', message: 'Student not found' }
+      });
+    }
+    if (!target.rows[0].has_contact) {
+      return res.status(400).json({
+        error: { code: 'NO_CONTACT', message: 'This student has not added contact details yet' }
+      });
+    }
+    if (target.rows[0].show_contact) {
+      return res.status(400).json({
+        error: { code: 'CONTACT_PUBLIC', message: 'This contact is already visible' }
+      });
+    }
+
+    const existing = await findContactRequest(userId, to_user_id);
+    if (existing) {
+      const codes = {
+        accepted: ['ALREADY_ACCEPTED', 'You can already see this contact'],
+        declined: ['DECLINED', 'This student declined your request'],
+        pending:
+          existing.from_user === userId
+            ? ['ALREADY_REQUESTED', 'You already sent a request']
+            : ['INCOMING_PENDING', 'This student already asked for your contact. Accept it on your Home page']
+      };
+      const [code, text] = codes[existing.status];
+      return res.status(409).json({ error: { code, message: text } });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO contact_requests (from_user, to_user, message)
+       VALUES ($1, $2, $3)
+       RETURNING id, status, message, created_at`,
+      [userId, to_user_id, cleanMessage || null]
+    );
+
+    return res.status(201).json(result.rows[0]);
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({
+        error: { code: 'ALREADY_REQUESTED', message: 'You already sent a request' }
+      });
+    }
+    console.error('Create contact request error:', error.message);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to send request' }
+    });
+  }
+});
+
+// The receiver accepts or declines a pending request.
+app.patch('/api/contact-requests/:id', async (req, res) => {
+  const userId = requireUser(req, res);
+  if (!userId) return;
+
+  const { status } = req.body || {};
+
+  if (!['accepted', 'declined'].includes(status) || !UUID_REGEX.test(req.params.id)) {
+    return res.status(400).json({
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid status or request ID' }
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE contact_requests SET status = $1, responded_at = NOW(), seen_by_sender = false
+       WHERE id = $2 AND to_user = $3 AND status = 'pending'
+       RETURNING id, status`,
+      [status, req.params.id, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: { code: 'REQUEST_NOT_FOUND', message: 'Request not found or already answered' }
+      });
+    }
+
+    return res.status(200).json(result.rows[0]);
+  } catch (error) {
+    console.error('Answer contact request error:', error.message);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to answer request' }
+    });
+  }
+});
+
+// The sender cancels a request that is still pending.
+app.delete('/api/contact-requests/:id', async (req, res) => {
+  const userId = requireUser(req, res);
+  if (!userId) return;
+
+  if (!UUID_REGEX.test(req.params.id)) {
+    return res.status(400).json({
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid request ID' }
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `DELETE FROM contact_requests
+       WHERE id = $1 AND from_user = $2 AND status = 'pending'
+       RETURNING id`,
+      [req.params.id, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: { code: 'REQUEST_NOT_FOUND', message: 'Request not found or already answered' }
+      });
+    }
+
+    return res.status(204).send();
+  } catch (error) {
+    console.error('Cancel contact request error:', error.message);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to cancel request' }
     });
   }
 });
