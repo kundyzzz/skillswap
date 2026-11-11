@@ -21,6 +21,7 @@ export function getToken() {
 }
 
 export function setToken(token) {
+  cache.clear();
   try {
     localStorage.setItem(TOKEN_KEY, token);
   } catch {
@@ -29,6 +30,7 @@ export function setToken(token) {
 }
 
 export function clearToken() {
+  cache.clear();
   try {
     localStorage.removeItem(TOKEN_KEY);
   } catch {
@@ -36,7 +38,31 @@ export function clearToken() {
   }
 }
 
-async function request(path, { method = 'GET', body, auth = false } = {}) {
+// Small in-memory cache so moving between pages feels instant.
+// - 'static' answers (categories, skills directory) never change -> kept for the session.
+// - 'short' answers (my profile, my skills, matches) are kept 60 s and thrown away
+//   after any change (POST / PUT / PATCH / DELETE), so the user never sees old data.
+const cache = new Map(); // key -> { data, expires }
+const SHORT_TTL = 60 * 1000;
+
+export function clearCache() {
+  cache.clear();
+}
+
+function clearShortCache() {
+  for (const [key, entry] of cache) {
+    if (entry.expires !== Infinity) cache.delete(key);
+  }
+}
+
+async function request(path, { method = 'GET', body, auth = false, cacheFor } = {}) {
+  const cacheKey = cacheFor ? `${auth ? getToken() : ''}|${path}` : null;
+  if (cacheKey) {
+    const hit = cache.get(cacheKey);
+    if (hit && hit.expires > Date.now()) return hit.data;
+  }
+  if (method !== 'GET') clearShortCache();
+
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (auth) {
@@ -70,6 +96,13 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
     throw new ApiError(response.status, code, message);
   }
 
+  if (cacheKey) {
+    cache.set(cacheKey, {
+      data,
+      expires: cacheFor === 'static' ? Infinity : Date.now() + SHORT_TTL
+    });
+  }
+
   return data;
 }
 
@@ -80,17 +113,19 @@ export const login = (email, password) =>
 export const getMe = () => request('/auth/me', { auth: true });
 
 // 2. Profile
-export const getUser = (id) => request(`/users/${id}`, { auth: true });
+export const getUser = (id) => request(`/users/${id}`, { auth: true, cacheFor: 'short' });
 export const getMyProfile = () => request('/users/me', { auth: true }); // includes contact + show_contact
 export const getContact = (id) => request(`/users/${id}/contact`, { auth: true });
 export const updateMe = (data) => request('/users/me', { method: 'PUT', body: data, auth: true });
 
 // 3. Categories
-export const getCategories = () => request('/categories');
-export const getCategorySkills = (categoryId) => request(`/categories/${categoryId}/skills`);
+export const getCategories = () => request('/categories', { cacheFor: 'static' });
+export const getCategorySkills = (categoryId) =>
+  request(`/categories/${categoryId}/skills`, { cacheFor: 'static' });
+export const getAllSkills = () => request('/skills', { cacheFor: 'static' }); // whole directory in one call
 
 // 4. Skills
-export const getMySkills = () => request('/users/me/skills', { auth: true });
+export const getMySkills = () => request('/users/me/skills', { auth: true, cacheFor: 'short' });
 export const addMySkill = (skill_id, type, level) =>
   request('/users/me/skills', { method: 'POST', body: { skill_id, type, level }, auth: true });
 export const updateMySkill = (id, data) =>
@@ -99,7 +134,7 @@ export const deleteMySkill = (id) =>
   request(`/users/me/skills/${id}`, { method: 'DELETE', auth: true });
 
 // 5. Sprint 2: matching, search, request board
-export const getMatches = () => request('/matches', { auth: true });
+export const getMatches = () => request('/matches', { auth: true, cacheFor: 'short' });
 export const searchStudents = (subject = '', category = '') => {
   const params = new URLSearchParams();
   if (subject) params.set('subject', subject);
@@ -111,5 +146,7 @@ export const createRequest = (title, category_id) =>
   request('/requests', { method: 'POST', body: { title, category_id }, auth: true });
 export const respondToRequest = (id) =>
   request(`/requests/${id}/responses`, { method: 'POST', auth: true });
+export const cancelResponse = (id) =>
+  request(`/requests/${id}/responses`, { method: 'DELETE', auth: true });
 export const setRequestStatus = (id, status) =>
   request(`/requests/${id}`, { method: 'PATCH', body: { status }, auth: true });

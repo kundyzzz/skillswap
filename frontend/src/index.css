@@ -196,6 +196,9 @@ textarea {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.page-title {
+  margin-top: 0;
+}
 .eyebrow.plain {
   border: none;
   background: none;
@@ -680,6 +683,26 @@ h3 {
   padding: 60px 0;
   text-align: center;
   font-weight: 600;
+}
+/* The free server sleeps after 15 min without visitors. If loading takes
+   longer than 4 s, explain why instead of leaving the user guessing. */
+.spinner::after {
+  content: 'Waking up the server — the first visit can take up to a minute.';
+  display: block;
+  margin-top: 10px;
+  font-weight: 400;
+  color: var(--ink-soft);
+  opacity: 0;
+  animation: spinner-hint 0.3s ease 4s forwards;
+}
+@keyframes spinner-hint {
+  to { opacity: 1; }
+}
+.row-gap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* ---------- Matches / Search / Board ---------- */

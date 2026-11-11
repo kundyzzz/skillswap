@@ -45,8 +45,7 @@ export default function Home() {
     <Page>
       <div className="space-between" style={{ alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div>
-          <span className="eyebrow plain">04 · Matches</span>
-          <h1 style={{ marginTop: 4 }}>Students you could learn with</h1>
+          <h1 className="page-title">Students you could learn with</h1>
           <p className="muted" style={{ margin: 0 }}>
             Based on your selected teaching and learning skills.
           </p>

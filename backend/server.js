@@ -1203,6 +1203,51 @@ app.post('/api/requests/:id/responses', async (req, res) => {
   }
 });
 
+// Withdraw my "I can help" (only my own response; the request must still be open).
+app.delete('/api/requests/:id/responses', async (req, res) => {
+  const userId = requireUser(req, res);
+  if (!userId) return;
+
+  if (!UUID_REGEX.test(req.params.id)) {
+    return res.status(400).json({
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid request ID' }
+    });
+  }
+
+  try {
+    const found = await pool.query('SELECT status FROM requests WHERE id = $1', [req.params.id]);
+
+    if (found.rows.length === 0) {
+      return res.status(404).json({
+        error: { code: 'REQUEST_NOT_FOUND', message: 'Request not found' }
+      });
+    }
+    if (found.rows[0].status !== 'open') {
+      return res.status(400).json({
+        error: { code: 'REQUEST_CLOSED', message: 'This request is closed' }
+      });
+    }
+
+    const result = await pool.query(
+      'DELETE FROM request_responses WHERE request_id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: { code: 'RESPONSE_NOT_FOUND', message: 'You have not responded to this request' }
+      });
+    }
+
+    return res.status(204).send();
+  } catch (error) {
+    console.error('Cancel response error:', error.message);
+    return res.status(500).json({
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to cancel response' }
+    });
+  }
+});
+
 // Author closes or reopens a request.
 app.patch('/api/requests/:id', async (req, res) => {
   const userId = requireUser(req, res);

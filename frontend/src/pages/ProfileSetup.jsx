@@ -83,17 +83,29 @@ export default function ProfileSetup() {
   const filled = PROFILE_FIELDS.filter((f) => isFilled(form[f.key])).length;
   const percent = Math.round((filled / PROFILE_FIELDS.length) * 50); // step 1 = first 50%
 
+  // Accepts a username/number or a pasted link (t.me/..., wa.me/...) and keeps only the part we store.
+  const cleanContact = () => {
+    let value = form.contact.trim();
+    if (form.contactApp === 'telegram') {
+      value = value.replace(/^(https?:\/\/)?(www\.)?(t\.me|telegram\.me)\//i, '').replace(/[/?].*$/, '');
+    } else {
+      value = value.replace(/^(https?:\/\/)?(www\.)?(wa\.me|api\.whatsapp\.com\/send\?phone=)\/?/i, '');
+      value = value.replace(/[\s()-]/g, '');
+    }
+    return value;
+  };
+
   const validate = () => {
     const next = {};
     if (!form.name.trim()) next.name = 'Full name is required';
     if (!form.year) next.year = 'Please choose your year of study';
     if (form.bio.length > BIO_LIMIT) next.bio = `About me must be ${BIO_LIMIT} characters or less`;
-    const contact = form.contact.trim();
+    const contact = cleanContact();
     if (contact) {
       if (form.contactApp === 'telegram' && !/^@?[A-Za-z0-9_]{5,32}$/.test(contact)) {
         next.contact = 'Telegram username: 5–32 letters, numbers or _';
       }
-      if (form.contactApp === 'whatsapp' && !/^\+?[0-9]{10,15}$/.test(contact.replace(/[\s-]/g, ''))) {
+      if (form.contactApp === 'whatsapp' && !/^\+?[0-9]{10,15}$/.test(contact)) {
         next.contact = 'WhatsApp number: 10–15 digits, e.g. +77001234567';
       }
     }
@@ -120,10 +132,10 @@ export default function ProfileSetup() {
       show_contact: form.showContact
     };
     // Contact is sent only when typed, so an empty field never wipes a saved contact.
-    const contact = form.contact.trim();
+    const contact = cleanContact();
     if (contact) {
       if (form.contactApp === 'telegram') body.telegram = contact.startsWith('@') ? contact : `@${contact}`;
-      else body.whatsapp = contact.replace(/[\s-]/g, '');
+      else body.whatsapp = contact;
     }
 
     try {
@@ -147,7 +159,7 @@ export default function ProfileSetup() {
     <Page variant="setup">
       <div className="setup-grid">
         <section>
-          <span className="eyebrow">02 · Your profile</span>
+          <span className="eyebrow">Your profile</span>
           <h2 style={{ fontSize: 30, marginTop: 14, lineHeight: 1.2 }}>
             Help your matches know who they are meeting.
           </h2>
@@ -267,7 +279,7 @@ export default function ProfileSetup() {
               <input
                 id="ps-contact"
                 className={`input ${errors.contact ? 'invalid' : ''}`}
-                placeholder={form.contactApp === 'telegram' ? '@username' : '+77001234567'}
+                placeholder={form.contactApp === 'telegram' ? '@username or t.me/username' : '+77001234567 or wa.me/77001234567'}
                 value={form.contact}
                 onChange={set('contact')}
               />

@@ -18,13 +18,13 @@ export default function MySkills() {
   const loadMine = () => api.getMySkills().then(setMySkills);
 
   useEffect(() => {
-    Promise.all([api.getCategories(), api.getMySkills(), api.getUser(user.id)])
-      .then(async ([cats, mine, prof]) => {
+    // 4 requests in parallel (before: 3 + one more per category, one after another).
+    Promise.all([api.getCategories(), api.getMySkills(), api.getUser(user.id), api.getAllSkills()])
+      .then(([cats, mine, prof, skills]) => {
         setCategories(cats);
         setMySkills(mine);
         setProfile(prof);
-        const lists = await Promise.all(cats.map((c) => api.getCategorySkills(c.id)));
-        setAllSkills(lists.flat());
+        setAllSkills(skills);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -38,8 +38,7 @@ export default function MySkills() {
     <Page variant="app">
       <div className="space-between" style={{ alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div>
-          <span className="eyebrow plain">03 · Skills</span>
-          <h1 style={{ marginTop: 4 }}>My skills</h1>
+          <h1 className="page-title">My skills</h1>
           <p className="muted" style={{ margin: 0 }}>
             Choose at least one skill in each section so we can find useful exchanges for you.
           </p>

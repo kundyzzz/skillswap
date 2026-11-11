@@ -70,8 +70,8 @@ export default function ProfilePage({ userId }) {
         <aside className="card profile-card">
           <Avatar name={profile.name} size={80} />
           <h3>{profile.name}</h3>
-          <div className="muted">{subtitle || (isMe ? 'School and year not set' : '')}</div>
-          <div className="muted">{profile.university}</div>
+          {profile.university && <div className="muted">{profile.university}</div>}
+          {subtitle && <div className="muted">{subtitle}</div>}
 
           <div className="stat-box">
             <strong>{isMe ? `${completion}%` : profile.skills.length}</strong>
@@ -106,8 +106,7 @@ export default function ProfilePage({ userId }) {
         </aside>
 
         <section>
-          <span className="eyebrow plain">05 · Student profile</span>
-          <h2 style={{ marginTop: 4 }}>{isMe ? 'My profile' : `About ${profile.name.split(' ')[0]}`}</h2>
+          <h2 style={{ marginTop: 0 }}>{isMe ? 'My profile' : `About ${profile.name.split(' ')[0]}`}</h2>
 
           {isMe && missing.length > 0 && (
             <div className="alert info section-gap" data-testid="missing-alert">

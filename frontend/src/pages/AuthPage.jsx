@@ -13,7 +13,7 @@ export default function AuthPage({ initialMode = 'signup' }) {
     <Page variant="auth">
       <div className="auth-grid">
         <section>
-          <span className="eyebrow">01 · Get started</span>
+          <span className="eyebrow">Get started</span>
           <h1>
             Exchange skills with
             <br />

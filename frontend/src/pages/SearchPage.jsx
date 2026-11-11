@@ -8,13 +8,15 @@ export default function SearchPage() {
   const [categories, setCategories] = useState([]);
   const [subject, setSubject] = useState('');
   const [category, setCategory] = useState('');
-  const [results, setResults] = useState(null); // null = nothing searched yet
+  const [results, setResults] = useState(null); // null = still loading
   const [lastQuery, setLastQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     api.getCategories().then(setCategories).catch((e) => setError(e.message));
+    run('', ''); // show everyone who teaches something right away
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const run = async (s = subject, c = category) => {
@@ -38,14 +40,20 @@ export default function SearchPage() {
   const clear = () => {
     setSubject('');
     setCategory('');
-    setResults(null);
-    setLastQuery('');
+    run('', '');
   };
+
+  // Picking a category searches immediately.
+  const changeCategory = (value) => {
+    setCategory(value);
+    run(subject, value);
+  };
+
+  const filtered = Boolean(lastQuery || category);
 
   return (
     <Page>
-      <span className="eyebrow plain">06 · Search</span>
-      <h1 style={{ marginTop: 4 }}>Find a student by subject</h1>
+      <h1 className="page-title">Find a student by subject</h1>
       <p className="muted" style={{ marginTop: 0 }}>
         Search everyone who can teach a subject, even without a mutual match.
       </p>
@@ -61,7 +69,7 @@ export default function SearchPage() {
         <select
           className="select"
           value={category}
-          onChange={(e) => setCategory(e.target.value)}
+          onChange={(e) => changeCategory(e.target.value)}
           aria-label="Category"
         >
           <option value="">All categories</option>
@@ -82,6 +90,8 @@ export default function SearchPage() {
         </div>
       )}
 
+      {!results && !error && <div className="spinner">Loading students…</div>}
+
       {results && results.length === 0 && (
         <div className="panel white section-gap center-text" data-testid="no-results">
           <h3>No students found</h3>
@@ -99,11 +109,15 @@ export default function SearchPage() {
         <>
           <div className="results-bar section-gap">
             <span className="small-caps" data-testid="result-count">
-              {results.length} {results.length === 1 ? 'student' : 'students'} found
+              {filtered
+                ? `${results.length} ${results.length === 1 ? 'student' : 'students'} found`
+                : `All students who teach · ${results.length}`}
             </span>
-            <button className="link-btn" type="button" onClick={clear}>
-              Clear search
-            </button>
+            {filtered && (
+              <button className="link-btn" type="button" onClick={clear}>
+                Clear search
+              </button>
+            )}
           </div>
           <div className="student-grid">
             {results.map((s, i) => (

@@ -47,8 +47,7 @@ export default function BoardPage() {
 
   return (
     <Page>
-      <span className="eyebrow plain">07 · Request board</span>
-      <h1 style={{ marginTop: 4 }}>Ask for help</h1>
+      <h1 className="page-title">Ask for help</h1>
       <p className="muted" style={{ marginTop: 0 }}>
         Post what you need help with. Anyone who knows the subject can answer “I can help”.
       </p>
@@ -203,6 +202,11 @@ function RequestCard({ request: r, isMine, onChange }) {
           <div className="small-caps" style={{ marginBottom: 6 }}>
             {r.responders.length === 0 ? 'No responders yet' : `${r.responders.length} can help`}
           </div>
+          {r.responders.length > 0 && (
+            <p className="muted" style={{ margin: '0 0 8px' }}>
+              Open a profile to see their skills and contact details.
+            </p>
+          )}
           <div className="chips" data-testid="responders">
             {r.responders.map((p) => (
               <Link key={p.id} to={`/users/${p.id}`} className="chip">
@@ -224,14 +228,26 @@ function RequestCard({ request: r, isMine, onChange }) {
             {r.responses_count} {r.responses_count === 1 ? 'student' : 'students'} can help
           </span>
           {r.responded_by_me ? (
-            <span className="match-badge oneway">✓ Responded</span>
+            <div className="row-gap">
+              <span className="match-badge oneway">✓ You offered help</span>
+              {!closed && (
+                <button
+                  className="btn small"
+                  disabled={busy}
+                  onClick={() => act(() => api.cancelResponse(r.id))}
+                  data-testid="cancel-response"
+                >
+                  {busy ? 'Cancelling…' : 'Cancel'}
+                </button>
+              )}
+            </div>
           ) : (
             <button
               className="btn primary small"
               disabled={busy || closed}
               onClick={() => act(() => api.respondToRequest(r.id))}
             >
-              I can help
+              {busy ? 'Sending…' : 'I can help'}
             </button>
           )}
         </div>
