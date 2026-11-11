@@ -13,10 +13,17 @@ export default function SearchPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  // First load: categories and everyone who teaches, together, then the page appears at once.
   useEffect(() => {
-    api.getCategories().then(setCategories).catch((e) => setError(e.message));
-    run('', ''); // show everyone who teaches something right away
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    Promise.all([api.getCategories(), api.searchStudents('', '')])
+      .then(([cats, students]) => {
+        setCategories(cats);
+        setResults(students);
+      })
+      .catch((e) => {
+        setError(e.message);
+        setResults([]);
+      });
   }, []);
 
   const run = async (s = subject, c = category) => {
@@ -50,6 +57,8 @@ export default function SearchPage() {
   };
 
   const filtered = Boolean(lastQuery || category);
+
+  if (results === null && !error) return <div className="spinner">Loading students…</div>;
 
   return (
     <Page>
@@ -89,8 +98,6 @@ export default function SearchPage() {
           {error}
         </div>
       )}
-
-      {!results && !error && <div className="spinner">Loading students…</div>}
 
       {results && results.length === 0 && (
         <div className="panel white section-gap center-text" data-testid="no-results">

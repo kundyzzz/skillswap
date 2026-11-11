@@ -15,15 +15,23 @@ export default function Home() {
   const [profile, setProfile] = useState(null);
   const [skills, setSkills] = useState([]);
   const [matches, setMatches] = useState([]);
+  const [incoming, setIncoming] = useState(null);
   const [filter, setFilter] = useState('all'); // all | mutual | can_teach_you
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api.getUser(user.id), api.getMySkills(), api.getMatches()])
-      .then(([p, s, m]) => {
-        setProfile(p);
+    // One load for the whole page, so the request block does not pop in later.
+    Promise.all([
+      api.getUser(user.id),
+      api.getMySkills(),
+      api.getMatches(),
+      api.getContactRequests({ fresh: true }).catch(() => ({ incoming: [] }))
+    ])
+      .then(([p, s, m, r]) => {
+        setIncoming(r.incoming);
         setSkills(s);
         setMatches(m);
+        setProfile(p);
       })
       .catch((e) => setError(e.message));
   }, [user.id]);
@@ -56,7 +64,7 @@ export default function Home() {
         <span className="badge">Profile completion: {completion}%</span>
       </div>
 
-      <ContactRequests />
+      <ContactRequests initial={incoming || []} />
 
       {completion < 100 && (
         <div className="alert info section-gap" data-testid="steps-banner">
@@ -147,8 +155,8 @@ export default function Home() {
 
 // US-12: contact requests waiting for my answer. Hidden when there are none.
 // Accept is sent at once; Decline waits 5 seconds with an Undo button.
-function ContactRequests() {
-  const [items, setItems] = useState([]);
+function ContactRequests({ initial }) {
+  const [items, setItems] = useState(initial);
   const [error, setError] = useState('');
   const undo = useUndo(5000);
 
@@ -157,10 +165,6 @@ function ContactRequests() {
       .getContactRequests({ fresh: true })
       .then((r) => setItems(r.incoming))
       .catch(() => {});
-
-  useEffect(() => {
-    load();
-  }, []);
 
   // Accept: sent at once. Decline: 5 seconds to undo.
   const answer = (r, status) => {

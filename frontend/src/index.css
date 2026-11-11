@@ -31,6 +31,14 @@ body,
   min-height: 100%;
 }
 
+/* No sideways sliding: nothing may stick out to the right, and a sideways
+   swipe on a touchpad/phone does not drag the page or start "go back". */
+html,
+body {
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+}
+
 body {
   background: var(--cream);
   color: var(--ink);

@@ -18,15 +18,22 @@ export default function ProfilePage({ userId }) {
 
   const [profile, setProfile] = useState(null);
   const [categories, setCategories] = useState([]);
+  const [contacts, setContacts] = useState(null); // My contacts, loaded together with the page
   const [error, setError] = useState('');
 
   useEffect(() => {
     setProfile(null);
     setError('');
-    Promise.all([api.getUser(id, { fresh: !isMe }), api.getCategories()])
-      .then(([p, cats]) => {
-        setProfile(p);
+    // Everything the page shows is loaded at once, so nothing pops in later.
+    Promise.all([
+      api.getUser(id, { fresh: !isMe }),
+      api.getCategories(),
+      isMe ? api.getContactRequests({ fresh: true }) : Promise.resolve(null)
+    ])
+      .then(([p, cats, c]) => {
+        setContacts(c);
         setCategories(cats);
+        setProfile(p);
       })
       .catch((e) => setError(e.code === 'USER_NOT_FOUND' ? 'This student does not exist.' : e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -155,7 +162,7 @@ export default function ProfilePage({ userId }) {
             <SkillChips skills={learn} categoryName={categoryName} empty={isMe ? 'No learning skills yet' : '—'} />
           </div>
 
-          {isMe && <MyContacts />}
+          {isMe && contacts && <MyContacts initial={contacts} />}
         </section>
       </div>
     </Page>
@@ -392,8 +399,8 @@ function ContactBox({ profile, onChange }) {
 }
 
 // US-12: everyone I exchanged contacts with, my sent requests and their answers.
-function MyContacts() {
-  const [data, setData] = useState(null);
+function MyContacts({ initial }) {
+  const [data, setData] = useState(initial);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState('');
   const [hidden, setHidden] = useState([]); // notifications closed with ✕
@@ -411,23 +418,27 @@ function MyContacts() {
       load();
     });
 
+  // Opening this page = the new answers are seen (the badge on Profile goes away).
+  const markSeen = (d) => {
+    if (d.unseen > 0) {
+      api
+        .markContactAnswersSeen()
+        .then(api.announceRequestsChanged)
+        .catch(() => {});
+    }
+  };
+
   const load = () =>
     api
       .getContactRequests({ fresh: true })
       .then((d) => {
         setData(d);
-        // Opening this page = the new answers are seen (the badge on Profile goes away).
-        if (d.unseen > 0) {
-          api
-            .markContactAnswersSeen()
-            .then(api.announceRequestsChanged)
-            .catch(() => {});
-        }
+        markSeen(d);
       })
       .catch((e) => setError(e.message));
 
   useEffect(() => {
-    load();
+    markSeen(initial);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
